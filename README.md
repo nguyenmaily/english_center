@@ -1,4 +1,4 @@
-# English Center Project
+# 📘 English Center Project
 
 ## Mục tiêu
 Hệ thống quản lý trung tâm tiếng Anh, bao gồm quản lý học viên, giáo viên, lớp học, khóa học, điểm danh, tài chính, thông báo và báo cáo.
