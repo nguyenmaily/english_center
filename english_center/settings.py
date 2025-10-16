@@ -37,9 +37,27 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    
+    # Django REST Framework
+    'rest_framework',
+    'rest_framework_simplejwt',
+    
+    # Third party apps
+    'corsheaders',
+    'django_filters',
+    'drf_yasg',
+    
+    # Local apps
+    'core',
+    'authentication',
+    'campus',
+    'users',
+    'courses',
+    'assignments'
 ]
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -72,10 +90,22 @@ WSGI_APPLICATION = 'english_center.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.sqlite3',
+#         'NAME': BASE_DIR / 'db.sqlite3',
+#     }
+# }
+
+# settings.py
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': 'english_center_db',
+        'USER': 'postgres',
+        'PASSWORD': 'nhungtran2708',  # Password bạn đã đặt
+        'HOST': 'localhost',
+        'PORT': '5432',
     }
 }
 
@@ -120,3 +150,77 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# Custom User Model
+AUTH_USER_MODEL = 'authentication.UserAccount'
+
+
+AUTHENTICATION_BACKENDS = [
+    'django.contrib.auth.backends.ModelBackend',  # ← Phải có
+]
+# Django REST Framework Configuration
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+    'DEFAULT_RENDERER_CLASSES': [
+        'core.renderers.CustomJSONRenderer',
+    ],
+    'DEFAULT_PAGINATION_CLASS': 'core.pagination.CustomPagination',
+    'PAGE_SIZE': 20,
+    'DEFAULT_FILTER_BACKENDS': [
+        'django_filters.rest_framework.DjangoFilterBackend',
+        'rest_framework.filters.SearchFilter',
+        'rest_framework.filters.OrderingFilter',
+    ],
+    'DEFAULT_SCHEMA_CLASS': 'rest_framework.schemas.coreapi.AutoSchema',
+    # 'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+}
+
+# JWT Configuration
+from datetime import timedelta
+
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    'ROTATE_REFRESH_TOKEN': True,
+    'BLACKLIST_AFTER_ROTATION': True,
+    'UPDATE_LAST_LOGIN': True,
+    'ALGORITHM': 'HS256',
+    'SIGNING_KEY': SECRET_KEY,
+    'VERIFYING_KEY': None,
+    'AUTH_HEADER_TYPES': ('Bearer',),
+    'AUTH_HEADER_NAME': 'HTTP_AUTHORIZATION',
+    'USER_ID_FIELD': 'id',
+    'USER_ID_CLAIM': 'user_id',
+}
+
+# CORS Configuration
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
+CORS_ALLOW_CREDENTIALS = True
+
+# Spectacular (Swagger) Configuration
+# SPECTACULAR_SETTINGS = {
+#     'TITLE': 'English Center API',
+#     'DESCRIPTION': 'API documentation for English Center Management System',
+#     'VERSION': '1.0.0',
+#     'SERVE_INCLUDE_SCHEMA': False,
+#     'SCHEMA_PATH_PREFIX': '/api/v1/',
+# }
+
+# Email Configuration (for password reset)
+EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+
+# Media files
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
+
+# Static files
+STATIC_ROOT = BASE_DIR / 'staticfiles'
