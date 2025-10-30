@@ -1,0 +1,14 @@
+<form method="post" action="" hx-post="" hx-target="#login-form" hx-swap="outerHTML">
+  {% csrf_token %}
+  {% if error %}
+    <div class="alert">{{ error }}</div>
+  {% endif %}
+  <label>Tên đăng nhập</label>
+  <input type="text" name="username" value="{{ username|default:'' }}" required>
+  <label>Mật khẩu</label>
+  <input type="password" name="password" required>
+  <button type="submit" class="btn">Đăng nhập</button>
+{% comment %}Keep simple, extra links can be added later{% endcomment %}
+</form>
+
+

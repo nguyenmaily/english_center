@@ -1,0 +1,88 @@
+{% load static %}
+<!doctype html>
+<html lang="vi">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}English Center{% endblock %}</title>
+    <link rel="stylesheet" href="{% static 'core/styles.css' %}">
+    <script src="https://unpkg.com/htmx.org@2.0.3" defer></script>
+</head>
+<body>
+    <header class="ec-nav">
+        <div class="container">
+            <a href="/" class="brand">English Center</a>
+            <nav>
+                <a href="/" class="{% if request.path == '/' %}active{% endif %}">Trang chủ</a>
+                {% if request.user.is_authenticated %}
+                    <a href="/ho-so/" class="{% if '/ho-so/' in request.path %}active{% endif %}">Hồ sơ</a>
+                    <a href="/doi-mat-khau/" class="{% if '/doi-mat-khau/' in request.path %}active{% endif %}">Đổi mật khẩu</a>
+                    {% if request.user.roleid and request.user.roleid.name in 'admin manager' %}
+                        <a href="/nguoi-dung/" class="{% if '/nguoi-dung/' in request.path %}active{% endif %}">Người dùng</a>
+                    {% endif %}
+                    <a href="/dang-xuat/">Đăng xuất</a>
+                {% else %}
+                    <a href="/dang-nhap/" class="{% if '/dang-nhap/' in request.path %}active{% endif %}">Đăng nhập</a>
+                    <a href="/dang-ky/" class="btn-link {% if '/dang-ky/' in request.path %}active{% endif %}">Đăng ký</a>
+                {% endif %}
+            </nav>
+        </div>
+    </header>
+
+    {% if messages %}
+    <div class="container mt">
+        {% for message in messages %}
+            <div class="alert">{{ message }}</div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <main class="container">
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="ec-footer">
+        <div class="container footer-grid">
+            <div class="footer-col">
+                <h3>TRUNG TÂM ANH NGỮ</h3>
+                {% for campus in campuses %}
+                <div class="campus-item">
+                    <strong>{{ campus.name }}</strong>
+                    {% if campus.address %}<p>{{ campus.address }}</p>{% endif %}
+                    {% if campus.phone %}<p class="phone">📞 {{ campus.phone }}</p>{% endif %}
+                </div>
+                {% empty %}
+                <p>Chưa có thông tin cơ sở</p>
+                {% endfor %}
+                <button class="btn-footer">XEM BẢN ĐỒ &gt;</button>
+            </div>
+            <div class="footer-col">
+                <h3>CÔNG TY TNHH TƯ VẤN GIÁO DỤC</h3>
+                <div class="contact-info">
+                    <p><strong>Hotline:</strong> <a href="tel:0377602075">0377 602 075</a> / <a href="tel:0988202904">0988 202 904</a></p>
+                    <p><strong>Giải quyết lỗi Test Online:</strong> <a href="tel:0399452279">0399 452 279</a></p>
+                    <p><strong>Email:</strong> <a href="mailto:info@englishcenter.edu.vn">info@englishcenter.edu.vn</a></p>
+                </div>
+                <div class="working-hours">
+                    <h4>THỜI GIAN LÀM VIỆC</h4>
+                    <p><strong>Sáng:</strong> 08:00 - 12:00 (Thứ Hai – Thứ Bảy)</p>
+                    <p><strong>Chiều:</strong> 13:30 - 17:30 (Thứ Hai – Thứ Bảy)</p>
+                    <p><strong>Tối:</strong> 18:00 – 21:45 (Thứ Hai – Thứ Bảy)</p>
+                </div>
+            </div>
+            <div class="footer-col">
+                <h3>FANPAGE</h3>
+                <div class="fanpage-placeholder">
+                    <p>Kết nối với chúng tôi trên Facebook</p>
+                    <a href="#" class="btn-footer" target="_blank">Theo dõi trang</a>
+                </div>
+            </div>
+        </div>
+        <div class="footer-bottom">
+            <p>© {% now "Y" %} English Center. Tất cả quyền được bảo lưu.</p>
+        </div>
+    </footer>
+</body>
+</html>
+
+

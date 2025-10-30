@@ -1,0 +1,11 @@
+{% extends 'core/base.html' %}
+{% block title %}Đăng nhập{% endblock %}
+{% block content %}
+<div class="auth-box">
+  <h2>Đăng nhập</h2>
+  <div id="login-form" hx-target="this" hx-swap="outerHTML">
+    {% include 'authentication/partials/login_form.html' %}
+  </div>
+{% endblock %}
+
+

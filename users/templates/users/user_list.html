@@ -1,0 +1,55 @@
+{% extends 'core/base.html' %}
+{% block title %}Người dùng{% endblock %}
+{% block content %}
+<h2>Danh sách người dùng</h2>
+<form method="get" class="mt" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+  <label>Lọc theo vai trò</label>
+  <select name="role" onchange="this.form.submit()">
+    <option value="">Tất cả</option>
+    <option value="student" {% if request.GET.role == 'student' %}selected{% endif %}>Học viên</option>
+    <option value="teacher" {% if request.GET.role == 'teacher' %}selected{% endif %}>Giáo viên</option>
+    <option value="manager" {% if request.GET.role == 'manager' %}selected{% endif %}>Quản lý</option>
+    <option value="admin" {% if request.GET.role == 'admin' %}selected{% endif %}>Admin</option>
+  </select>
+  <input type="text" name="q" value="{{ request.GET.q|default:'' }}" placeholder="Tìm tên, email, họ tên" style="padding:10px 12px;border:1px solid #ccc;border-radius:8px;min-width:260px">
+  <button class="btn" type="submit">Tìm</button>
+  <a class="btn" href="/nguoi-dung/" style="margin-left:8px">Xoá lọc</a>
+  </form>
+
+<table class="mt" style="width:100%; border-collapse:collapse">
+  <thead>
+    <tr>
+      <th style="text-align:left; border-bottom:1px solid #eee; padding:8px">Tên đăng nhập</th>
+      <th style="text-align:left; border-bottom:1px solid #eee; padding:8px">Họ tên</th>
+      <th style="text-align:left; border-bottom:1px solid #eee; padding:8px">Email</th>
+      <th style="text-align:left; border-bottom:1px solid #eee; padding:8px">Vai trò</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for u in users %}
+    <tr>
+      <td style="padding:8px"><a href="/nguoi-dung/{{ u.id }}/">{{ u.username }}</a></td>
+      <td style="padding:8px">{{ u.fullname|default:'-' }}</td>
+      <td style="padding:8px">{{ u.email }}</td>
+      <td style="padding:8px">{{ u.roleid.name if u.roleid }}</td>
+    </tr>
+    {% empty %}
+    <tr><td colspan="4" style="padding:8px">Không có dữ liệu</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% if page_obj %}
+<div class="mt" style="display:flex;gap:8px;align-items:center">
+  {% if page_obj.has_previous %}
+    <a class="btn" href="?{% if request.GET.role %}role={{request.GET.role}}&{% endif %}{% if request.GET.q %}q={{request.GET.q}}&{% endif %}page={{ page_obj.previous_page_number }}">« Trước</a>
+  {% endif %}
+  <span>Trang {{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</span>
+  {% if page_obj.has_next %}
+    <a class="btn" href="?{% if request.GET.role %}role={{request.GET.role}}&{% endif %}{% if request.GET.q %}q={{request.GET.q}}&{% endif %}page={{ page_obj.next_page_number }}">Sau »</a>
+  {% endif %}
+  </div>
+{% endif %}
+{% endblock %}
+
+

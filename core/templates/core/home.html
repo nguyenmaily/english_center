@@ -1,0 +1,33 @@
+{% extends 'core/base.html' %}
+{% block title %}Trang chủ{% endblock %}
+{% block content %}
+<section class="hero">
+  <h1>Khoá học đa dạng cho mọi người</h1>
+  <p>Tìm kiếm và bắt đầu hành trình học tập ngay hôm nay.</p>
+  <form class="hero-search">
+    <input type="text" placeholder="Tìm khoá học...">
+    <button type="submit">Tìm kiếm</button>
+  </form>
+</section>
+
+<section class="cards-grid">
+  <h2>Khoá học nổi bật</h2>
+  <div class="grid">
+    {% for i in "123456" %}
+      <article class="card">
+        <div class="card-thumb"></div>
+        <h3>Khoá học mẫu {{ forloop.counter }}</h3>
+        <p>Giảng viên giàu kinh nghiệm, nội dung cập nhật.</p>
+        <button class="btn">Xem chi tiết</button>
+      </article>
+    {% endfor %}
+  </div>
+  {% if not request.user.is_authenticated %}
+    <div class="cta">
+      <h3>Đăng ký tài khoản để truy cập nhiều khoá học hơn</h3>
+      <a class="btn" href="/dang-nhap/">Đăng nhập</a>
+    </div>
+  {% endif %}
+{% endblock %}
+
+

@@ -1,0 +1,48 @@
+{% extends 'core/base.html' %}
+{% block title %}Hồ sơ{% endblock %}
+{% block content %}
+<div class="profile">
+  <h2>Hồ sơ cá nhân</h2>
+  <div id="profile-card" hx-target="this" hx-swap="outerHTML">
+    {% include 'users/partials/profile_card.html' %}
+  </div>
+  <hr class="mt">
+  <h3>Cập nhật thông tin</h3>
+  <form method="post" hx-post="" hx-target="#profile-card" hx-swap="outerHTML">
+    {% csrf_token %}
+    <div class="grid-2">
+      <div>
+        <label>Họ tên</label>
+        <input type="text" name="fullname" value="{{ user.fullname|default:'' }}">
+      </div>
+      <div>
+        <label>Email</label>
+        <input type="email" name="email" value="{{ user.email }}">
+      </div>
+      <div>
+        <label>Số điện thoại</label>
+        <input type="text" name="phone" value="{{ user.phone|default:'' }}">
+      </div>
+      <div>
+        <label>Giới tính</label>
+        <select name="sex">
+          <option value="male" {% if user.sex == 'male' %}selected{% endif %}>Nam</option>
+          <option value="female" {% if user.sex == 'female' %}selected{% endif %}>Nữ</option>
+          <option value="other" {% if user.sex == 'other' %}selected{% endif %}>Khác</option>
+        </select>
+      </div>
+      <div>
+        <label>Ngày sinh</label>
+        <input type="date" name="dob" value="{{ user.dob|date:'Y-m-d' }}">
+      </div>
+      <div>
+        <label>Ảnh đại diện (URL)</label>
+        <input type="url" name="urlImage" value="{{ user.urlImage|default:'' }}">
+      </div>
+    </div>
+    <button type="submit" class="btn mt">Lưu thay đổi</button>
+  </form>
+</div>
+{% endblock %}
+
+

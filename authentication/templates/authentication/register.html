@@ -1,0 +1,48 @@
+{% extends 'core/base.html' %}
+{% block title %}Đăng ký{% endblock %}
+{% block content %}
+<div class="auth-box">
+  <h2>Tạo tài khoản</h2>
+  {% if errors %}
+    <div class="alert">Vui lòng kiểm tra lại thông tin.</div>
+  {% endif %}
+  <form method="post">
+    {% csrf_token %}
+    <label>Tên đăng nhập</label>
+    <input type="text" name="username" value="{{ form.username|default:'' }}" required>
+    {% if errors.username %}<div class="alert">{{ errors.username.0 }}</div>{% endif %}
+    <label>Email</label>
+    <input type="email" name="email" value="{{ form.email|default:'' }}" required>
+    {% if errors.email %}<div class="alert">{{ errors.email.0 }}</div>{% endif %}
+    <label>Họ tên</label>
+    <input type="text" name="fullname" value="{{ form.fullname|default:'' }}">
+    <label>Số điện thoại</label>
+    <input type="text" name="phone" value="{{ form.phone|default:'' }}">
+    <div class="grid-2">
+      <div>
+        <label>Giới tính</label>
+        <select name="sex">
+          <option value="male">Nam</option>
+          <option value="female">Nữ</option>
+          <option value="other" selected>Khác</option>
+        </select>
+      </div>
+      <div>
+        <label>Ngày sinh</label>
+        <input type="date" name="dob" value="{{ form.dob|default:'' }}">
+      </div>
+    </div>
+    <label>Mật khẩu</label>
+    <input type="password" name="password" required>
+    <label>Nhập lại mật khẩu</label>
+    <input type="password" name="password_confirm" required>
+    {% if errors.password %}<div class="alert">{{ errors.password.0 }}</div>{% endif %}
+    {% if errors.password_confirm %}<div class="alert">{{ errors.password_confirm.0 }}</div>{% endif %}
+    {% if errors.role %}<div class="alert">{{ errors.role.0 }}</div>{% endif %}
+    <button type="submit" class="btn mt">Đăng ký</button>
+  </form>
+  <p class="mt">Đã có tài khoản? <a href="/dang-nhap/">Đăng nhập</a></p>
+</div>
+{% endblock %}
+
+

@@ -1,0 +1,16 @@
+{% extends 'core/base.html' %}
+{% block title %}Chi tiết người dùng{% endblock %}
+{% block content %}
+<h2>Chi tiết người dùng</h2>
+<div class="profile-card">
+  <img class="avatar" src="{{ u.urlImage|default:'/static/core/avatar-placeholder.png' }}" alt="avatar">
+  <div>
+    <p><strong>Tên đăng nhập:</strong> {{ u.username }}</p>
+    <p><strong>Họ tên:</strong> {{ u.fullname|default:'-' }}</p>
+    <p><strong>Email:</strong> {{ u.email }}</p>
+    <p><strong>Vai trò:</strong> {{ u.roleid.name if u.roleid }}</p>
+    {% if u.phone %}<p><strong>Điện thoại:</strong> {{ u.phone }}</p>{% endif %}
+  </div>
+{% endblock %}
+
+

@@ -1,0 +1,12 @@
+<div class="profile-card">
+  <img class="avatar" src="{{ user.urlImage|default:'/static/core/avatar-placeholder.png' }}" alt="avatar">
+  <div>
+    <h3>{{ user.fullname|default:user.username }}</h3>
+    <p><strong>Email:</strong> {{ user.email }}</p>
+    {% if user.phone %}<p><strong>Điện thoại:</strong> {{ user.phone }}</p>{% endif %}
+    <p><strong>Giới tính:</strong> {% if user.sex == 'male' %}Nam{% elif user.sex == 'female' %}Nữ{% else %}Khác{% endif %}</p>
+    {% if user.dob %}<p><strong>Ngày sinh:</strong> {{ user.dob|date:'d/m/Y' }}</p>{% endif %}
+  </div>
+</div>
+
+
