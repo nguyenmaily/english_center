@@ -14,8 +14,5 @@ urlpatterns = [
     # Skill endpoints
     path('skills/<uuid:pk>/', views.SkillDetailView.as_view(), name='skill-detail'),
     
-    # Class endpoints
-    path('classes/', views.ClassListCreateView.as_view(), name='class-list-create'),
-    path('classes/<uuid:pk>/', views.ClassDetailView.as_view(), name='class-detail'),
-    path('classes/<uuid:pk>/assign-teacher/', views.ClassAssignTeacherView.as_view(), name='class-assign-teacher'),
+   
 ]

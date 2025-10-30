@@ -1,3 +1,4 @@
+
 from rest_framework import generics, filters, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -7,11 +8,13 @@ from django.shortcuts import get_object_or_404
 from django.db.models import Q
 
 from authentication.permissions import PermissionMixin
-from .models import Course, Skill, Class
+from classes.models import Class
+from courses.models import Course, Skill
+
 from .serializers import (
     CourseSerializer, CourseDetailSerializer,
     SkillSerializer, SkillCreateUpdateSerializer,
-    ClassSerializer, ClassDetailSerializer
+    CourseClassSerializer, ClassDetailSerializer
 )
 
 
@@ -120,7 +123,7 @@ class CourseClassesListView(PermissionMixin, generics.ListAPIView):
     - teacher_assigned: true/false - Lọc lớp đã/chưa có giáo viên
     - is_public: true/false - Lọc lớp public
     """
-    serializer_class = ClassSerializer
+    serializer_class = CourseClassSerializer
     permission_classes = [IsAuthenticated]
     permission_map = {
         'GET': 'view_courses',
@@ -178,7 +181,7 @@ class ClassListCreateView(PermissionMixin, generics.ListCreateAPIView):
     GET /api/classes/ - Lấy danh sách lớp học
     POST /api/classes/ - Tạo lớp học mới (cần quyền: manage_classes)
     """
-    serializer_class = ClassSerializer
+    serializer_class = CourseClassSerializer
     permission_classes = [IsAuthenticated]
     permission_map = {
         'GET': 'view_classes',
@@ -228,7 +231,7 @@ class ClassDetailView(PermissionMixin, generics.RetrieveUpdateDestroyAPIView):
     def get_serializer_class(self):
         if self.request.method == 'GET':
             return ClassDetailSerializer
-        return ClassSerializer
+        return CourseClassSerializer
 
 
 class ClassAssignTeacherView(PermissionMixin, APIView):

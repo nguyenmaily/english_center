@@ -1,5 +1,6 @@
 from rest_framework import serializers
-from .models import Course, Skill, Class
+from .models import Course, Skill
+from classes.models import Class
 
 
 class SkillSerializer(serializers.ModelSerializer):
@@ -74,7 +75,7 @@ class CourseDetailSerializer(serializers.ModelSerializer):
         return obj.classes.filter(status__in=['planned', 'ongoing']).count()
 
 
-class ClassSerializer(serializers.ModelSerializer):
+class CourseClassSerializer(serializers.ModelSerializer):
     """
     Serializer cho Class
     """

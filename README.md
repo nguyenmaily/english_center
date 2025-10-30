@@ -23,8 +23,7 @@ Hệ thống quản lý trung tâm tiếng Anh, bao gồm quản lý học viên
 - **requests/**: Quản lý yêu cầu (ReserveRequest, LeaveRequest)  
 - **notifications/**: Hệ thống thông báo *(hiện tại chưa dùng)*  
 - **reporting/**: Báo cáo và thống kê *(hiện tại chưa dùng)*  
-- **finance/**: Quản lý tài chính *(hiện tại chưa dùng)*  
-- **test/**: Quản lý test *(sẽ tạo sau)*  
+- **tests/**: Quản lý test và đánh giá học viên  
 
 ---
 

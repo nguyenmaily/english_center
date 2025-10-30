@@ -4,6 +4,7 @@ import uuid
 from core.models import BaseModel
 
 
+
 class Assignment(BaseModel):
     """
     Model cho bài tập
@@ -24,7 +25,7 @@ class Assignment(BaseModel):
     )
     url_file = models.CharField(max_length=500, blank=True, null=True)
     session = models.ForeignKey(
-        'courses.Session',  # Đảm bảo đúng tên app và model
+        'class_sessions.Session',  # Đảm bảo đúng tên app và model
         on_delete=models.CASCADE,
         related_name='assignments',
         db_column='session_id'

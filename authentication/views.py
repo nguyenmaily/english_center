@@ -1,4 +1,6 @@
 
+from django.db.models.base import transaction
+from drf_yasg.views import APIView
 from rest_framework import status, generics, permissions, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -12,6 +14,8 @@ from datetime import timedelta
 import secrets
 import string
 import random
+
+from users.models import Student
 
 
 from .models import UserAccount, PasswordResetToken, Role, Permission, RolePermission
@@ -343,33 +347,42 @@ class ResetPasswordView(generics.GenericAPIView):
 
 class RegisterView(generics.CreateAPIView):
     """
-    User registration endpoint
-    POST /api/auth/register/
+    POST /api/auth/register/ - Đăng ký Student
     """
     serializer_class = UserRegistrationSerializer
-    queryset = UserAccount.objects.all()
-    permission_classes = [permissions.AllowAny]
+    permission_classes = []
     
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
+        # Validate role
+        role_name = serializer.validated_data.get('role', '').lower()
+        if role_name != 'student':
+            return Response({
+                'success': False,
+                'error': 'Only students can self-register.'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        # Tạo user
         user = serializer.save()
         
-        # Generate JWT tokens
-        refresh = RefreshToken.for_user(user)
-        # Set user status to active
-
-        user.status = 'active' 
-        user.save()
+        # Tạo student profile
+        Student.objects.create(
+            user_account=user,
+            commitment_status=Student.CommitmentStatus.NOT_COMMITTED,
+            target_score=None
+        )
+        
         return Response({
             'success': True,
-            'data': {
-                'user': UserAccountSerializer(user).data,
-                'access_token': str(refresh.access_token),
-                'refresh_token': str(refresh),
-            },
-            'error': None
+            'message': 'Student account registered successfully',
+            'user': {
+                'id': str(user.id),
+                'username': user.username,
+                'email': user.email,
+                'role': 'student'
+            }
         }, status=status.HTTP_201_CREATED)
 
 

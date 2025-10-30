@@ -11,6 +11,10 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 from pathlib import Path
+import os
+
+
+
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -37,6 +41,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+
     
     # Django REST Framework
     'rest_framework',
@@ -53,7 +58,14 @@ INSTALLED_APPS = [
     'campus',
     'users',
     'courses',
-    'assignments'
+    'assignments',
+
+    'classes',
+    'enrollment',
+    'class_sessions',
+    'requests',
+    'tests',
+
 ]
 
 MIDDLEWARE = [
@@ -100,6 +112,7 @@ WSGI_APPLICATION = 'english_center.wsgi.application'
 # settings.py
 DATABASES = {
     'default': {
+
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': 'english_center_db',
         'USER': 'postgres',

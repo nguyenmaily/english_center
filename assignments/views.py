@@ -39,9 +39,9 @@ class StudentAssignmentListView(PermissionMixin, generics.ListAPIView):
     ordering = ['-created_at']
     
     def get_queryset(self):
-        student = self.request.user.student
+        student = self.request.user.student_profile
         return Assignment.objects.filter(
-            session__class_session__enrollments__student=student,
+            session__class_field__enrollments__student=student,
             status=Assignment.Status.PUBLISHED
         ).distinct()
 
@@ -62,9 +62,9 @@ class StudentAssignmentDetailView(PermissionMixin, generics.RetrieveAPIView):
         if getattr(self, 'swagger_fake_view', False):
             return Assignment.objects.none()
         
-        student = self.request.user.student
+        student = self.request.user.student_profile
         return Assignment.objects.filter(
-            session__class_session__enrollments__student=student,
+            session__class_field__enrollments__student=student,
             status=Assignment.Status.PUBLISHED
         ).distinct()
 
@@ -79,13 +79,36 @@ class StudentAssignmentStartView(PermissionMixin, APIView):
     }
     
     def get(self, request, pk):
-        student = request.user.student
+        from users.models import Student
+        from enrollment.models import Enrollment
+        
+        # Kiểm tra user có student profile không
+        if not hasattr(request.user, 'student_profile'):
+            return Response({
+                'success': False,
+                'error': 'Only students can access this endpoint'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
+        student = request.user.student_profile
+        
+        # Lấy assignment (không filter enrollment trong query này)
         assignment = get_object_or_404(
-            Assignment,
+            Assignment.objects.select_related('session'),
             pk=pk,
-            session__class_session__enrollments__student=student,
-            status=Assignment.Status.PUBLISHED
+            status='published'  # Hoặc Assignment.Status.PUBLISHED nếu có enum
         )
+        
+        # Kiểm tra enrollment riêng
+        is_enrolled = Enrollment.objects.filter(
+            student=student,
+            class_field=assignment.session.class_field
+        ).exists()
+        
+        if not is_enrolled:
+            return Response({
+                'success': False,
+                'error': 'You are not enrolled in this class'
+            }, status=status.HTTP_403_FORBIDDEN)
         
         # Kiểm tra xem học viên đã nộp bài chưa
         existing_submission = Submission.objects.filter(
@@ -95,14 +118,20 @@ class StudentAssignmentStartView(PermissionMixin, APIView):
         
         if existing_submission:
             return Response({
+                'success': True,
                 'message': 'You have already submitted this assignment',
-                'submission_id': existing_submission.id,
-                'can_resubmit': existing_submission.needs_resubmit
+                'data': {
+                    'submission_id': str(existing_submission.id),
+                    'status': existing_submission.status,
+                    'can_resubmit': getattr(existing_submission, 'needs_resubmit', False)
+                }
             }, status=status.HTTP_200_OK)
         
-        serializer = AssignmentDetailSerializer(assignment)
-        return Response(serializer.data)
-
+        serializer = AssignmentDetailSerializer(assignment, context={'request': request})
+        return Response({
+            'success': True,
+            'data': serializer.data
+        })
 
 class StudentAssignmentSubmitView(PermissionMixin, APIView):
     """
@@ -123,11 +152,11 @@ class StudentAssignmentSubmitView(PermissionMixin, APIView):
     }
     
     def post(self, request, pk):
-        student = request.user.student
+        student = request.user.student_profile
         assignment = get_object_or_404(
             Assignment,
             pk=pk,
-            session__class_session__enrollments__student=student,
+            session__class_field__enrollments__student=student,
             status=Assignment.Status.PUBLISHED
         )
         
@@ -202,7 +231,7 @@ class StudentAssignmentResultView(PermissionMixin, APIView):
     }
     
     def get(self, request, pk):
-        student = request.user.student
+        student = request.user.student_profile
         assignment = get_object_or_404(Assignment, pk=pk)
         
         submission = get_object_or_404(
@@ -232,7 +261,7 @@ class StudentSubmissionListView(PermissionMixin, generics.ListAPIView):
     ordering = ['-submitted_at']
     
     def get_queryset(self):
-        student = self.request.user.student
+        student = self.request.user.student_profile
         return Submission.objects.filter(student=student)
 
 
@@ -252,7 +281,7 @@ class StudentSubmissionDetailView(PermissionMixin, generics.RetrieveAPIView):
         if getattr(self, 'swagger_fake_view', False):
             return Submission.objects.none()
         
-        student = self.request.user.student
+        student = self.request.user.student_profile
         return Submission.objects.filter(student=student)
 
 class StudentSubmissionResubmitView(PermissionMixin, APIView):
@@ -273,7 +302,7 @@ class StudentSubmissionResubmitView(PermissionMixin, APIView):
     }
     
     def post(self, request, pk):
-        student = request.user.student
+        student = request.user.student_profile
         submission = get_object_or_404(Submission, pk=pk, student=student)
         
         if not submission.needs_resubmit:
