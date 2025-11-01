@@ -29,7 +29,7 @@ SECRET_KEY = 'django-insecure-4zawvf^8h#)53h_f0^01c88kn(p@&f5#aoyekh_bz8rdhq8h+5
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['localhost', '127.0.0.1']
 
 
 # Application definition
@@ -145,9 +145,9 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
+LANGUAGE_CODE = 'vi'
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = 'Asia/Ho_Chi_Minh'
 
 USE_I18N = True
 
@@ -211,13 +211,39 @@ SIMPLE_JWT = {
     'USER_ID_CLAIM': 'user_id',
 }
 
-# CORS Configuration
+# CORS Configuration - Cho phép frontend gọi API
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "http://localhost:5500",      # Live Server (VSCode)
+    "http://127.0.0.1:5500",
+    "http://localhost:8080",      #EDB PostgreSQL:
+    "http://127.0.0.1:8080",
+    "http://localhost:9000",      # Python HTTP Server (port thay thế)
+    "http://127.0.0.1:9000",
 ]
 
 CORS_ALLOW_CREDENTIALS = True
+
+CORS_ALLOW_METHODS = [
+    'DELETE',
+    'GET',
+    'OPTIONS',
+    'PATCH',
+    'POST',
+    'PUT',
+]
+
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
 
 # Spectacular (Swagger) Configuration
 # SPECTACULAR_SETTINGS = {
