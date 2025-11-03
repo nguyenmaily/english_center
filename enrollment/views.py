@@ -57,8 +57,8 @@ class EnrollmentSerializer(serializers.ModelSerializer):
             # Return basic data if serialization fails
             return {
                 'id': str(instance.id),
-                'student_id': str(instance.student_id),
-                'class_id': str(instance.class_id),
+                'student_id': str(instance.student.id) if instance.student else str(instance.student_id) if hasattr(instance, 'student_id') else None,
+                'class_id': str(instance.class_field.id) if instance.class_field else str(instance.class_field_id) if hasattr(instance, 'class_field_id') else None,
                 'amount': float(instance.amount),
                 'invoice_status': instance.invoice_status,
                 'due_date': instance.due_date,
@@ -116,19 +116,30 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
                     notes = notes.replace(old, new)
                 validated_data['notes'] = notes
             
-            student_id = validated_data.get('student_id')
-            class_id = validated_data.get('class_id')
+            from users.models import Student
             
-            # Check class capacity
+            student_id = validated_data.pop('student_id', None)
+            class_id = validated_data.pop('class_id', None)
+            
+            # Get student and class objects
             try:
-                cls = Class.objects.get(id=class_id)
+                student = Student.objects.get(id=student_id) if student_id else None
+                cls = Class.objects.get(id=class_id) if class_id else None
+            except Student.DoesNotExist:
+                return Response({'detail': 'Student not found'}, status=status.HTTP_400_BAD_REQUEST)
             except Class.DoesNotExist:
                 return Response({'detail': 'Class not found'}, status=status.HTTP_400_BAD_REQUEST)
             
+            if not student or not cls:
+                return Response({'detail': 'student_id and class_id are required'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Check class capacity
             if cls.limit_slot is not None and cls.current_student_count >= cls.limit_slot:
                 return Response({'detail': 'Lop da day'}, status=status.HTTP_400_BAD_REQUEST)
             
             # Create enrollment with cleaned data
+            validated_data['student'] = student
+            validated_data['class_field'] = cls
             enrollment = Enrollment.objects.create(**validated_data)
             
             # Increment class counter
@@ -175,7 +186,7 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
         if not student_id:
             return Response({'detail': 'student_id is required'}, status=status.HTTP_400_BAD_REQUEST)
         enrollments = Enrollment.objects.filter(student_id=student_id).order_by('-created_at')
-        class_ids = [e.class_id for e in enrollments]
+        class_ids = [e.class_field.id for e in enrollments]
         classes = Class.objects.filter(id__in=class_ids)
         # merge with sessions for timetable
         sessions = Session.objects.filter(class_id__in=class_ids).order_by('study_date', 'start_time')
@@ -243,8 +254,8 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
                 'orm_count': orm_count,
                 'first_enrollment': {
                     'id': str(first_enrollment.id) if first_enrollment else None,
-                    'student_id': str(first_enrollment.student_id) if first_enrollment else None,
-                    'class_id': str(first_enrollment.class_id) if first_enrollment else None,
+                    'student_id': str(first_enrollment.student.id) if first_enrollment and first_enrollment.student else (str(first_enrollment.student_id) if first_enrollment and hasattr(first_enrollment, 'student_id') else None),
+                    'class_id': str(first_enrollment.class_field.id) if first_enrollment and first_enrollment.class_field else (str(first_enrollment.class_field_id) if first_enrollment and hasattr(first_enrollment, 'class_field_id') else None),
                     'amount': float(first_enrollment.amount) if first_enrollment else None,
                 } if first_enrollment else None,
                 'connection_info': {

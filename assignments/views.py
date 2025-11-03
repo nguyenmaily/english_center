@@ -41,7 +41,7 @@ class StudentAssignmentListView(PermissionMixin, generics.ListAPIView):
     def get_queryset(self):
         student = self.request.user.student_profile
         return Assignment.objects.filter(
-            session__class_field__enrollments__student=student,
+            session__class_session__enrollments__student=student,
             status=Assignment.Status.PUBLISHED
         ).distinct()
 
@@ -64,7 +64,7 @@ class StudentAssignmentDetailView(PermissionMixin, generics.RetrieveAPIView):
         
         student = self.request.user.student_profile
         return Assignment.objects.filter(
-            session__class_field__enrollments__student=student,
+            session__class_session__enrollments__student=student,
             status=Assignment.Status.PUBLISHED
         ).distinct()
 
@@ -101,7 +101,7 @@ class StudentAssignmentStartView(PermissionMixin, APIView):
         # Kiểm tra enrollment riêng
         is_enrolled = Enrollment.objects.filter(
             student=student,
-            class_field=assignment.session.class_field
+            class_field=assignment.session.class_session
         ).exists()
         
         if not is_enrolled:
@@ -156,7 +156,7 @@ class StudentAssignmentSubmitView(PermissionMixin, APIView):
         assignment = get_object_or_404(
             Assignment,
             pk=pk,
-            session__class_field__enrollments__student=student,
+            session__class_session__enrollments__student=student,
             status=Assignment.Status.PUBLISHED
         )
         
@@ -461,9 +461,11 @@ class TeacherAssignmentSubmissionsView(PermissionMixin, APIView):
         serializer = SubmissionListSerializer(submissions, many=True)
         
         # Tính toán thống kê
-        total_students = assignment.session.class_session.enrollments.filter(
-            status='active'
-        ).count() if hasattr(assignment.session, 'class_session') else 0
+        from enrollment.models import Enrollment
+        class_obj = assignment.session.class_session
+        total_students = Enrollment.objects.filter(
+            class_field=class_obj
+        ).count() if class_obj else 0
         
         stats = {
             'total_students': total_students,

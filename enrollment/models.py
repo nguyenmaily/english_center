@@ -10,11 +10,21 @@ class Enrollment(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     notes = models.TextField(blank=True, null=True)
-    student_id = models.UUIDField()
-    class_id = models.UUIDField()
+    student = models.ForeignKey(
+        'users.Student',
+        on_delete=models.CASCADE,
+        related_name='enrollments',
+        db_column='student_id'
+    )
+    class_field = models.ForeignKey(
+        'classes.Class',
+        on_delete=models.CASCADE,
+        related_name='enrollments',
+        db_column='class_id'
+    )
 
     class Meta:
         db_table = 'enrollments'
         managed = False
-        unique_together = ('student_id', 'class_id')
+        unique_together = ('student', 'class_field')
 

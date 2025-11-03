@@ -44,7 +44,7 @@ class RolePermission(models.Model):
     """
     Role Permission junction table
     """
-    role = models.ForeignKey(Role, on_delete=models.CASCADE, db_column='role_id', primary_key=True)
+    role = models.OneToOneField(Role, on_delete=models.CASCADE, db_column='role_id', primary_key=True)
     permission = models.ForeignKey(Permission, on_delete=models.CASCADE, db_column='permission_id')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

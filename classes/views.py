@@ -1,15 +1,11 @@
 from datetime import timedelta
-from rest_framework import viewsets, serializers, status
+from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from .models import Class
+from .serializers import ClassSerializer
 from class_sessions.models import Session
-
-
-class ClassSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Class
-        fields = '__all__'
+from class_sessions.serializers import SessionSerializer
 
 
 class ClassViewSet(viewsets.ModelViewSet):
@@ -59,7 +55,6 @@ class ClassViewSet(viewsets.ModelViewSet):
     def list_sessions(self, request, pk=None):
         cls = self.get_object()
         sessions = Session.objects.filter(class_session_id=cls.id).order_by('study_date', 'start_time')
-        from class_sessions.views import SessionSerializer  # local import to avoid circular
         data = SessionSerializer(sessions, many=True).data
         return Response(data)
 

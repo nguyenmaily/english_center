@@ -1,19 +1,10 @@
 from datetime import date, datetime
-from rest_framework import viewsets, serializers, status
+from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from .models import Session
-from  enrollment.models import Enrollment
-
-
-class SessionSerializer(serializers.ModelSerializer):
-    duration = serializers.ReadOnlyField()
-    is_checked_in = serializers.ReadOnlyField()
-    is_checked_out = serializers.ReadOnlyField()
-    
-    class Meta:
-        model = Session
-        fields = '__all__'
+from .serializers import SessionSerializer
+from enrollment.models import Enrollment
 
 
 class SessionViewSet(viewsets.ModelViewSet):
@@ -55,7 +46,7 @@ class SessionViewSet(viewsets.ModelViewSet):
             return Response({'detail': 'student_id is required'}, status=status.HTTP_400_BAD_REQUEST)
         
         # Lấy danh sách class_id của student
-        class_ids = list(Enrollment.objects.filter(student_id=student_id).values_list('class_id', flat=True))
+        class_ids = list(Enrollment.objects.filter(student_id=student_id).values_list('class_field_id', flat=True))
         
         # Lấy sessions của các class đó
         qs = Session.objects.filter(class_session_id__in=class_ids)
@@ -76,7 +67,7 @@ class SessionViewSet(viewsets.ModelViewSet):
             return Response({'detail': 'student_id is required'}, status=status.HTTP_400_BAD_REQUEST)
         
         today = date.today()
-        class_ids = list(Enrollment.objects.filter(student_id=student_id).values_list('class_id', flat=True))
+        class_ids = list(Enrollment.objects.filter(student_id=student_id).values_list('class_field_id', flat=True))
         qs = Session.objects.filter(class_session_id__in=class_ids, study_date__gte=today).order_by('study_date', 'start_time')
         
         return Response(SessionSerializer(qs, many=True).data)

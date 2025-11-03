@@ -6,11 +6,11 @@ from .models import Enrollment
 class EnrollmentAdmin(admin.ModelAdmin):
     list_display = (
         'id',
-        'student_id',
-        'class_id',
+        'student',
+        'class_field',
         'amount',
         'invoice_status',
         'due_date',
         'created_at',
     )
-    search_fields = ('student_id', 'class_id')
+    search_fields = ('student__id', 'class_field__id')
