@@ -76,3 +76,35 @@ class Session(BaseModel):
     def is_checked_out(self):
         """Kiểm tra đã check-out chưa"""
         return self.check_out is not None
+
+
+class Attendance(models.Model):
+    """
+    Model cho điểm danh học sinh trong buổi học
+    """
+    # Các trạng thái điểm danh
+    STATUS_PRESENT = 'present'  # Có mặt
+    STATUS_ABSENT = 'absent'    # Vắng mặt
+    STATUS_LATE = 'late'        # Đi muộn
+    STATUS_EXCUSED = 'excused'  # Vắng có phép
+    
+    STATUS_CHOICES = [
+        (STATUS_PRESENT, 'Present'),
+        (STATUS_ABSENT, 'Absent'),
+        (STATUS_LATE, 'Late'),
+        (STATUS_EXCUSED, 'Excused'),
+    ]
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    status = models.CharField(max_length=16)
+    student_id = models.UUIDField()
+    session_id = models.UUIDField()
+
+    class Meta:
+        db_table = 'attendances'
+        managed = False
+        verbose_name = 'Attendance'
+        verbose_name_plural = 'Attendances'
+    
+    def __str__(self):
+        return f"Attendance {self.id} - {self.status}"

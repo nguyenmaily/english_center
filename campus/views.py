@@ -20,18 +20,68 @@ class CampusListCreateView(PermissionMixin, generics.ListCreateAPIView):
     """
     GET /api/campus/campuses/ - Lấy danh sách tất cả campus
     POST /api/campus/campuses/ - Tạo campus mới (cần quyền: manage_campus)
+    
+    Note: Manager relationship is via ManagerProfile.campus_id (reverse)
+    
+    ============================================================================
+    PERMISSIONS - QUAN TRỌNG!
+    ============================================================================
+    permission_map định nghĩa permission cần thiết cho mỗi HTTP method:
+    - 'GET': 'view_campus'   → Cần permission 'view_campus' để xem danh sách
+    - 'POST': 'manage_campus' → Cần permission 'manage_campus' để tạo mới
+    
+    Để biết permission này thuộc role nào:
+    1. Tìm file: english_center/authentication/management/commands/setup_auth_data.py
+    2. Xem dictionary 'role_permissions' (dòng ~61)
+    3. Tìm permission name trong danh sách của role
+    
+    Ví dụ: 'manage_campus' có thể thuộc 'admin' hoặc 'manager'
+    ============================================================================
     """
     queryset = Campus.objects.all()
     serializer_class = CampusSerializer
     permission_classes = [IsAuthenticated]
     permission_map = {
-        'GET': 'view_campus',
-        'POST': 'manage_campus',
+        'GET': 'view_campus',      # Permission để GET (xem)
+        'POST': 'manage_campus',  # Permission để POST (tạo mới)
     }
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    search_fields = ['name', 'address', 'phone']
+    filterset_fields = ['status'] 
+    search_fields = ['name', 'address', 'hotline', 'email']  
     ordering_fields = ['name', 'created_at', 'updated_at']
     ordering = ['-created_at']
+    
+    def get_queryset(self):
+        """
+        Filter queryset based on user role:
+        - Admin: See all campuses
+        - Manager: Only see their own campus
+        """
+        queryset = super().get_queryset()
+        user = self.request.user
+        
+        # Check if user is manager
+        if hasattr(user, 'roleid') and user.roleid:
+            role_name = user.roleid.name
+            
+            if role_name == 'manager':
+                # Manager chỉ thấy campus của họ
+                from users.models import Manager
+                try:
+                    manager = Manager.objects.select_related('campus').get(user_account=user)
+                    if manager.campus:
+                        queryset = queryset.filter(id=manager.campus.id)
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.info(f"Manager {user.username} filtering campuses to: {manager.campus.name}")
+                    else:
+                        # Manager chưa có campus → không thấy campus nào
+                        queryset = queryset.none()
+                except Manager.DoesNotExist:
+                    # User không phải manager → không filter (admin sẽ thấy tất cả)
+                    pass
+        
+        return queryset
 
 
 class CampusDetailView(PermissionMixin, generics.RetrieveUpdateDestroyAPIView):
@@ -64,12 +114,12 @@ class CampusRoomsView(PermissionMixin, generics.ListAPIView):
     }
     
     def get_queryset(self):
-        # ✅ FIX: Thêm check cho Swagger
         if getattr(self, 'swagger_fake_view', False):
             return Room.objects.none()
         
         campus_id = self.kwargs['pk']
         return Room.objects.filter(campus_id=campus_id).select_related('campus')
+
 
 # ==================== ROOM VIEWS ====================
 
@@ -122,12 +172,12 @@ class RoomEquipmentsView(PermissionMixin, generics.ListAPIView):
     }
     
     def get_queryset(self):
-        # ✅ FIX: Thêm check cho Swagger
         if getattr(self, 'swagger_fake_view', False):
             return Equipment.objects.none()
         
         room_id = self.kwargs['pk']
         return Equipment.objects.filter(room_id=room_id).select_related('room', 'room__campus')
+
 
 class RoomToggleRepairView(PermissionMixin, APIView):
     """

@@ -57,12 +57,44 @@ class Command(BaseCommand):
             else:
                 self.stdout.write(f'Permission already exists: {permission.name}')
         
-        # Assign permissions to roles
+        # ============================================================================
+        # ASSIGN PERMISSIONS TO ROLES - QUAN TRỌNG!
+        # ============================================================================
+        # Đây là nơi map permissions với roles
+        # Để biết permission nào thuộc role nào, xem dictionary bên dưới
+        # 
+        # CÁCH ĐỌC:
+        # - Key: Tên role (student, teacher, manager, admin)
+        # - Value: Danh sách permission names mà role đó có
+        # 
+        # VÍ DỤ:
+        # 'manager': ['view_profile', 'edit_profile', ...]
+        # → Manager có các permissions: view_profile, edit_profile, ...
+        # 
+        # 'admin': list(Permission.objects.all()...)
+        # → Admin có TẤT CẢ permissions trong database
+        # ============================================================================
         role_permissions = {
-            'student': ['view_profile', 'edit_profile'],
-            'teacher': ['view_profile', 'edit_profile', 'manage_classes', 'manage_courses'],
-            'manager': ['view_profile', 'edit_profile', 'view_all_users', 'manage_classes', 'manage_courses', 'generate_reports'],
+            'student': [
+                'view_profile',      # Xem profile của mình
+                'edit_profile',      # Sửa profile của mình
+            ],
+            'teacher': [
+                'view_profile',      # Xem profile của mình
+                'edit_profile',      # Sửa profile của mình
+                'manage_classes',    # Quản lý lớp học
+                'manage_courses',    # Quản lý khóa học
+            ],
+            'manager': [
+                'view_profile',       # Xem profile của mình
+                'edit_profile',       # Sửa profile của mình
+                'view_all_users',     # Xem tất cả users (CHỈ MANAGER + ADMIN)
+                'manage_classes',     # Quản lý lớp học
+                'manage_courses',     # Quản lý khóa học
+                'generate_reports',   # Tạo báo cáo (CHỈ MANAGER + ADMIN)
+            ],
             'admin': list(Permission.objects.all().values_list('name', flat=True))
+            # Admin có TẤT CẢ permissions - không cần liệt kê
         }
         
         for role_name, perm_names in role_permissions.items():
