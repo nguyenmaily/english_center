@@ -38,8 +38,10 @@ class Command(BaseCommand):
             {'name': 'edit_profile', 'description': 'Can edit own profile'},
             {'name': 'view_all_users', 'description': 'Can view all users'},
             {'name': 'edit_all_users', 'description': 'Can edit all users'},
-            {'name': 'manage_classes', 'description': 'Can manage classes'},
+            {'name': 'view_courses', 'description': 'Can view courses'},
             {'name': 'manage_courses', 'description': 'Can manage courses'},
+            {'name': 'view_classes', 'description': 'Can view classes'},
+            {'name': 'manage_classes', 'description': 'Can manage classes'},
             {'name': 'manage_finance', 'description': 'Can manage finance'},
             {'name': 'generate_reports', 'description': 'Can generate reports'},
             {'name': 'manage_roles', 'description': 'Can manage roles and permissions'},
@@ -78,10 +80,14 @@ class Command(BaseCommand):
             'student': [
                 'view_profile',      # Xem profile của mình
                 'edit_profile',      # Sửa profile của mình
+                'view_courses',      # Xem danh sách khóa học
+                'view_classes',      # Xem danh sách lớp học
             ],
             'teacher': [
                 'view_profile',      # Xem profile của mình
                 'edit_profile',      # Sửa profile của mình
+                'view_courses',      # Xem danh sách khóa học
+                'view_classes',      # Xem danh sách lớp học
                 'manage_classes',    # Quản lý lớp học
                 'manage_courses',    # Quản lý khóa học
             ],
@@ -89,6 +95,8 @@ class Command(BaseCommand):
                 'view_profile',       # Xem profile của mình
                 'edit_profile',       # Sửa profile của mình
                 'view_all_users',     # Xem tất cả users (CHỈ MANAGER + ADMIN)
+                'view_courses',       # Xem danh sách khóa học
+                'view_classes',       # Xem danh sách lớp học
                 'manage_classes',     # Quản lý lớp học
                 'manage_courses',     # Quản lý khóa học
                 'generate_reports',   # Tạo báo cáo (CHỈ MANAGER + ADMIN)

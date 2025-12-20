@@ -65,7 +65,7 @@ def public_courses(request):
                 fee,
                 min_entry_score
             FROM courses
-            ORDER BY created_at DESC
+            ORDER BY name ASC
             LIMIT %s
         """, [limit])
         

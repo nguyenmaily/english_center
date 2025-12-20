@@ -119,7 +119,6 @@ class ClassSerializer(serializers.ModelSerializer):
             logger = logging.getLogger(__name__)
             logger.warning(f"Error calculating enrollment_count: {str(e)}")
             return 0
->>>>>>> origin/backend_nhung
 
 
 class ClassViewSet(viewsets.ModelViewSet):
