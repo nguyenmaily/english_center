@@ -13,9 +13,31 @@ logger = logging.getLogger(__name__)
 
 
 class EnrollmentSerializer(serializers.ModelSerializer):
+    student_info = serializers.SerializerMethodField()
+    payment_status = serializers.CharField(source='invoice_status', read_only=True)
+    
     class Meta:
         model = Enrollment
         fields = '__all__'
+    
+    def get_student_info(self, obj):
+        """Get student information including user account"""
+        try:
+            from users.models import Student
+            student = Student.objects.select_related('user_account').get(id=obj.student_id)
+            user = student.user_account
+            return {
+                'id': str(student.id),
+                'user_account': {
+                    'id': str(user.id),
+                    'username': user.username,
+                    'fullname': user.fullname,
+                    'email': user.email,
+                }
+            }
+        except Exception as e:
+            logger.warning(f"Could not fetch student info for enrollment {obj.id}: {str(e)}")
+            return None
     
     def to_representation(self, instance):
         """Override to handle encoding issues"""
@@ -71,6 +93,22 @@ class EnrollmentSerializer(serializers.ModelSerializer):
 class EnrollmentViewSet(viewsets.ModelViewSet):
     queryset = Enrollment.objects.all().order_by('-created_at')
     serializer_class = EnrollmentSerializer
+
+    def get_queryset(self):
+        """Filter enrollments by class_id or student_id if provided"""
+        queryset = super().get_queryset()
+        
+        # Filter by class_id
+        class_id = self.request.query_params.get('class_id')
+        if class_id:
+            queryset = queryset.filter(class_id=class_id)
+        
+        # Filter by student_id
+        student_id = self.request.query_params.get('student_id')
+        if student_id:
+            queryset = queryset.filter(student_id=student_id)
+        
+        return queryset
 
     def list(self, request, *args, **kwargs):
         """Override list method to add error handling"""

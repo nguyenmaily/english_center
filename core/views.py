@@ -123,3 +123,45 @@ def public_classes(request):
         'count': len(classes),
         'results': classes
     })
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])  # Không cần authentication
+def public_campuses(request):
+    """
+    GET /api/public/campuses/
+    
+    Trả về danh sách cơ sở công khai (cho dropdown trong form).
+    Không cần authentication.
+    """
+    try:
+        # Import Campus model
+        from campus.models import Campus
+        
+        # Get all active campuses using ORM (correct field names: hotline not phone)
+        campuses = Campus.objects.filter(status='active').values(
+            'id', 'name', 'address', 'hotline', 'email'
+        ).order_by('name')
+        
+        # Convert QuerySet to list
+        campuses_list = list(campuses)
+        
+        # Convert UUID to string for JSON serialization
+        for campus in campuses_list:
+            campus['id'] = str(campus['id'])
+        
+        return Response({
+            'count': len(campuses_list),
+            'results': campuses_list
+        })
+    except Exception as e:
+        # Log error and return empty list
+        print(f"❌ Error in public_campuses: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        return Response({
+            'count': 0,
+            'results': [],
+            'error': str(e)
+        })

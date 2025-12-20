@@ -393,7 +393,7 @@ class RoleViewSet(viewsets.ModelViewSet):
     ViewSet for Role CRUD operations
     Chỉ admin mới có quyền truy cập (kiểm tra từ database)
     """
-    queryset = Role.objects.all()
+    queryset = Role.objects.prefetch_related('role_permissions__permission').all()
     serializer_class = RoleSerializer
     permission_classes = [permissions.IsAuthenticated]
     

@@ -185,7 +185,7 @@ class ClassDetailSerializer(serializers.ModelSerializer):
                 'id': str(obj.campus.id),
                 'name': obj.campus.name,
                 'address': obj.campus.address,
-                'phone': obj.campus.phone
+                'phone': getattr(obj.campus, 'phone', None) or getattr(obj.campus, 'hotline', None)
             }
         return None
     

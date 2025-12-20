@@ -17,5 +17,9 @@ urlpatterns = [
 
     path('teachers/<uuid:teacher_id>/', views.TeacherDetailView.as_view(), name='teacher-detail'),
     
-   
+    path('managers/', views.ManagerListView.as_view(), name='manager-list'),
+    path('manager/dashboard-stats/', views.ManagerDashboardStatsView.as_view(), name='manager-dashboard-stats'),
+    path('admin/dashboard-stats/', views.AdminDashboardStatsView.as_view(), name='admin-dashboard-stats'),
+    
+    path('students/', views.StudentListView.as_view(), name='student-list'),
 ]
