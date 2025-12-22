@@ -289,6 +289,8 @@ class UserUpdateWithProfileSerializer(serializers.ModelSerializer):
         fields = [
             'email', 'fullname', 'phone', 'sex', 'dob', 
             'status', 'urlImage',
+            # Password field - write_only, not in response
+            'password',
             # Teacher fields
             'teacher_level', 'teacher_specialization', 'teacher_campus_id',
             # Manager fields
@@ -296,12 +298,20 @@ class UserUpdateWithProfileSerializer(serializers.ModelSerializer):
             # Student fields
             'student_target_score', 'student_commitment_status'
         ]
+        extra_kwargs = {
+            'password': {'write_only': True, 'required': False}
+        }
     
     @transaction.atomic
     def update(self, instance, validated_data):
         """
         Cập nhật User + Profile
+        
+        QUAN TRỌNG: Nếu có password trong validated_data, phải hash bằng set_password()
         """
+        # Extract password first - must be hashed before saving
+        password = validated_data.pop('password', None)
+        
         # Extract profile data
         teacher_level = validated_data.pop('teacher_level', None)
         teacher_specialization = validated_data.pop('teacher_specialization', None)
@@ -312,9 +322,17 @@ class UserUpdateWithProfileSerializer(serializers.ModelSerializer):
         student_target_score = validated_data.pop('student_target_score', None)
         student_commitment_status = validated_data.pop('student_commitment_status', None)
         
-        # Update user basic info
+        # Update user basic info (excluding password)
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
+        
+        # IMPORTANT: Hash password if provided
+        if password:
+            instance.set_password(password)
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"Password updated for user {instance.username} (ID: {instance.id})")
+        
         instance.save()
         
         # Update profile based on role
@@ -396,16 +414,23 @@ class TeacherSerializer(serializers.ModelSerializer):
     """Serializer cho Teacher"""
     user_info = UserSerializer(source='user_account', read_only=True)
     campus_name = serializers.CharField(source='campus.name', read_only=True)
+    display_name = serializers.SerializerMethodField()
     
     class Meta:
         model = Teacher
         fields = [
             'id', 'level', 'specialization', 
             'campus', 'campus_name',
-            'user_account', 'user_info',
+            'user_account', 'user_info', 'display_name',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
+    
+    def get_display_name(self, obj):
+        """Lấy tên hiển thị từ user_account"""
+        if obj.user_account:
+            return obj.user_account.fullname or obj.user_account.username
+        return 'N/A'
 
 
 class TeacherDetailSerializer(serializers.ModelSerializer):
@@ -429,7 +454,7 @@ class TeacherDetailSerializer(serializers.ModelSerializer):
                 'id': str(obj.campus.id),
                 'name': obj.campus.name,
                 'address': obj.campus.address,
-                'phone': obj.campus.phone
+                'phone': getattr(obj.campus, 'phone', None) or getattr(obj.campus, 'hotline', None)
             }
         return None
 

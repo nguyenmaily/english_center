@@ -8,7 +8,7 @@ class QuestionGroup(models.Model):
     skill = models.TextField()  # Listening, Reading, etc.
     context = models.TextField(blank=True, null=True)
     audio_file = models.TextField(blank=True, null=True)
-    image_file = models.TextField(blank=True, null=True)
+    image_file = models.TextField(blank=True, null=True)  # Image file path or URL
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -23,12 +23,15 @@ class QuestionGroup(models.Model):
 class Question(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     group_id = models.UUIDField(null=True, blank=True)
+    part = models.TextField(null=True, blank=True)  # Part 1, 2, 3, etc. (for single questions)
+    skill = models.TextField(null=True, blank=True)  # Listening, Reading, etc. (for single questions)
     text = models.TextField()
     option_a = models.TextField(null=True, blank=True)
     option_b = models.TextField(null=True, blank=True)
     option_c = models.TextField(null=True, blank=True)
     option_d = models.TextField(null=True, blank=True)
     correct_answer = models.TextField()
+    audio_file = models.TextField(null=True, blank=True)  # Audio file path or URL for single questions
     difficulty = models.CharField(max_length=20, default='medium')  # easy, medium, hard
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -81,6 +84,8 @@ class ExamInstance(models.Model):
     blueprint_id = models.UUIDField(null=True, blank=True)
     title = models.TextField()
     status = models.CharField(max_length=20, default='draft')  # draft, published, archived
+    class_id = models.UUIDField(null=True, blank=True)  # Link to Class - exam is visible only to students in this class
+    exam_type = models.CharField(max_length=50, null=True, blank=True)  # placement, midterm, final - for manual exams
     generated_at = models.DateTimeField(auto_now_add=True)
     created_by = models.UUIDField(null=True, blank=True)
 

@@ -1,15 +1,61 @@
 from rest_framework import serializers
 from .models import Campus, Room, Equipment
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
 
 
 class CampusSerializer(serializers.ModelSerializer):
     """
     Serializer for Campus model
+    
+    Note: Manager is assigned via ManagerProfile.campus_id (reverse relationship)
+    Not via Campus.manager_id (forward relationship)
     """
+    manager_name = serializers.SerializerMethodField()
+    manager_id = serializers.SerializerMethodField()
+    
+    code = serializers.ReadOnlyField()
+    
     class Meta:
         model = Campus
-        fields = ['id', 'name', 'address', 'phone', 'created_at', 'updated_at']
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        fields = [
+            'id', 'code', 'name', 'address', 'hotline', 'email',
+            'manager_id', 'manager_name', 'status', 'description',
+            'facilities', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'code', 'created_at', 'updated_at', 'manager_name', 'manager_id']
+    
+    def get_manager_id(self, obj):
+        """
+        Lấy manager_id từ reverse relationship (Manager → Campus)
+        Một campus chỉ có tối đa 1 manager
+        """
+        try:
+            # Import here to avoid circular dependency
+            from users.models import Manager
+            manager = Manager.objects.select_related('user_account').filter(campus=obj).first()
+            if manager:
+                return str(manager.user_account.id)
+            return None
+        except Exception as e:
+            print(f"❌ Error getting manager_id: {e}")
+            return None
+    
+    def get_manager_name(self, obj):
+        """
+        Lấy manager name từ reverse relationship
+        """
+        try:
+            from users.models import Manager
+            manager = Manager.objects.select_related('user_account').filter(campus=obj).first()
+            if manager:
+                user = manager.user_account
+                return user.fullname if user.fullname else user.username
+            return None
+        except Exception as e:
+            print(f"❌ Error getting manager_name: {e}")
+            return None
 
 
 class CampusDetailSerializer(serializers.ModelSerializer):
@@ -17,14 +63,44 @@ class CampusDetailSerializer(serializers.ModelSerializer):
     Detailed serializer for Campus with rooms count
     """
     rooms_count = serializers.SerializerMethodField()
+    manager_name = serializers.SerializerMethodField()
+    manager_id = serializers.SerializerMethodField()
+    code = serializers.ReadOnlyField()
     
     class Meta:
         model = Campus
-        fields = ['id', 'name', 'address', 'phone', 'rooms_count', 'created_at', 'updated_at']
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        fields = [
+            'id', 'code', 'name', 'address', 'hotline', 'email',
+            'manager_id', 'manager_name', 'status', 'description',
+            'facilities', 'rooms_count', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'code', 'created_at', 'updated_at', 'manager_name', 'manager_id']
     
     def get_rooms_count(self, obj):
         return obj.rooms.count()
+    
+    def get_manager_id(self, obj):
+        """Lấy manager_id từ reverse relationship"""
+        try:
+            from users.models import Manager
+            manager = Manager.objects.select_related('user_account').filter(campus=obj).first()
+            if manager:
+                return str(manager.user_account.id)
+            return None
+        except Exception:
+            return None
+    
+    def get_manager_name(self, obj):
+        """Lấy manager name từ reverse relationship"""
+        try:
+            from users.models import Manager
+            manager = Manager.objects.select_related('user_account').filter(campus=obj).first()
+            if manager:
+                user = manager.user_account
+                return user.fullname if user.fullname else user.username
+            return None
+        except Exception:
+            return None
 
 
 class RoomSerializer(serializers.ModelSerializer):
@@ -65,6 +141,6 @@ class EquipmentSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Equipment
-        fields = ['id', 'name', 'status', 'room', 'room_name', 'campus_name', 
+        fields = ['id', 'name', 'quantity', 'status', 'room', 'room_name', 'campus_name', 
                   'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at']

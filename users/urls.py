@@ -17,5 +17,15 @@ urlpatterns = [
 
     path('teachers/<uuid:teacher_id>/', views.TeacherDetailView.as_view(), name='teacher-detail'),
     
-   
+    path('managers/', views.ManagerListView.as_view(), name='manager-list'),
+    path('manager/dashboard-stats/', views.ManagerDashboardStatsView.as_view(), name='manager-dashboard-stats'),
+    path('admin/dashboard-stats/', views.AdminDashboardStatsView.as_view(), name='admin-dashboard-stats'),
+    
+    path('students/', views.StudentListView.as_view(), name='student-list'),
+    path('students/my-level/', views.MyLevelView.as_view(), name='student-my-level'),
+    
+    # Teacher class registration
+    path('teachers/available-classes/', views.TeacherAvailableClassesView.as_view(), name='teacher-available-classes'),
+    path('teachers/register-class/', views.TeacherRegisterClassView.as_view(), name='teacher-register-class'),
+    path('teachers/cancel-class-registration/', views.TeacherCancelClassRegistrationView.as_view(), name='teacher-cancel-class-registration'),
 ]

@@ -8,6 +8,12 @@ class CustomJSONRenderer(JSONRenderer):
     def render(self, data, accepted_media_type=None, renderer_context=None):
         response = renderer_context.get('response')
         
+        # Check if data already has 'success' field (already wrapped)
+        # This happens when view returns Response({'success': True, 'data': [...]})
+        if isinstance(data, dict) and 'success' in data:
+            # Data is already wrapped, don't wrap again
+            return super().render(data, accepted_media_type, renderer_context)
+        
         if response and hasattr(response, 'status_code'):
             if response.status_code >= 400:
                 # Error response

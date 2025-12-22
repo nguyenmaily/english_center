@@ -23,6 +23,10 @@ urlpatterns = [
     # Registration
     path('register/', views.RegisterView.as_view(), name='register'),
 
+    # Google OAuth
+    path('google/login/', views.GoogleLoginView.as_view(), name='google_login'),
+    path('google/callback/', views.GoogleCallbackView.as_view(), name='google_callback'),
+
     # Role & Permission CRUD (tự sinh từ router) 
     path('', include(router.urls)),
 ]

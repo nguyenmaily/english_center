@@ -229,3 +229,15 @@ class LogoutSerializer(serializers.Serializer):
 class RefreshTokenSerializer(serializers.Serializer):
     """Serializer for JWT refresh token"""
     refresh = serializers.CharField()
+
+
+class GoogleAuthSerializer(serializers.Serializer):
+    """Serializer for Google OAuth login request"""
+    redirect_uri = serializers.URLField(required=False, allow_blank=True)
+    frontend_redirect_uri = serializers.URLField(required=False, allow_blank=True)
+
+
+class GoogleCallbackSerializer(serializers.Serializer):
+    """Serializer for Google OAuth callback request"""
+    code = serializers.CharField(required=True)
+    redirect_uri = serializers.URLField(required=False, allow_blank=True)

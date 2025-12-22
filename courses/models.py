@@ -17,6 +17,15 @@ class Course(BaseModel):
     min_entry_score = models.IntegerField(null=True, blank=True)
     min_exit_score = models.IntegerField(null=True, blank=True)
     fee = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    skill = models.ForeignKey(
+        'courses.Skill',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='courses',
+        db_column='skill_id',
+        help_text='Kỹ năng của khóa học (LR hoặc SW)'
+    )
     
     class Meta:
         db_table = 'courses'
@@ -30,17 +39,14 @@ class Course(BaseModel):
 
 class Skill(BaseModel):
     """
-    Model cho kỹ năng trong khóa học
+    Model cho kỹ năng (LR hoặc SW)
+    1 Skill có thể thuộc nhiều Courses
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.TextField()
     description = models.TextField(blank=True, null=True)
-    course = models.ForeignKey(
-        Course,
-        on_delete=models.CASCADE,
-        related_name='skills',
-        db_column='course_id'
-    )
+    # ❌ Đã xóa: course = models.ForeignKey(...)
+    # ✅ Quan hệ ngược: course.skill với related_name='courses'
     
     class Meta:
         db_table = 'skills'
@@ -49,7 +55,25 @@ class Skill(BaseModel):
         verbose_name_plural = 'Skills'
     
     def __str__(self):
-        return f"{self.name} - {self.course.name}"
+        return f"{self.name}"
+    
+    @property
+    def skill_group(self):
+        """
+        Xác định skill_group (LR/SW) từ skill.name
+        Dùng để map với StudentCertificate.skill_group
+        """
+        name_upper = self.name.upper()
+        if 'LISTENING' in name_upper and 'READING' in name_upper:
+            return 'LR'
+        elif 'SPEAKING' in name_upper and 'WRITING' in name_upper:
+            return 'SW'
+        # Fallback: kiểm tra từ khóa đơn
+        if 'LISTENING' in name_upper or 'READING' in name_upper:
+            return 'LR'
+        elif 'SPEAKING' in name_upper or 'WRITING' in name_upper:
+            return 'SW'
+        return None
 
 
 

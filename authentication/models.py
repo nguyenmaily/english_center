@@ -21,6 +21,11 @@ class Role(BaseModel):
     
     def __str__(self):
         return self.name
+    
+    @property
+    def permissions(self):
+        """Get all permissions for this role"""
+        return Permission.objects.filter(permission_roles__role=self)
 
 
 class Permission(BaseModel):
@@ -44,8 +49,8 @@ class RolePermission(models.Model):
     """
     Role Permission junction table
     """
-    role = models.ForeignKey(Role, on_delete=models.CASCADE, db_column='role_id', primary_key=True)
-    permission = models.ForeignKey(Permission, on_delete=models.CASCADE, db_column='permission_id')
+    role = models.ForeignKey(Role, on_delete=models.CASCADE, db_column='role_id', primary_key=True, related_name='role_permissions')
+    permission = models.ForeignKey(Permission, on_delete=models.CASCADE, db_column='permission_id', related_name='permission_roles')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     

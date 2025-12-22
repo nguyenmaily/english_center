@@ -42,7 +42,7 @@ class CourseListCreateView(PermissionMixin, generics.ListCreateAPIView):
     ordering = ['name']
     
     def get_queryset(self):
-        queryset = Course.objects.all()
+        queryset = Course.objects.select_related('skill').all()
         
         # Filter theo max_entry_score (cho học viên đăng ký)
         max_entry_score = self.request.query_params.get('max_entry_score')
@@ -58,6 +58,12 @@ class CourseListCreateView(PermissionMixin, generics.ListCreateAPIView):
                 pass
         
         return queryset
+    
+    def get_serializer_context(self):
+        """Thêm request vào context để serializer có thể tính is_eligible"""
+        context = super().get_serializer_context()
+        context['request'] = self.request
+        return context
 
 
 class CourseDetailView(PermissionMixin, generics.RetrieveUpdateDestroyAPIView):
@@ -83,35 +89,164 @@ class CourseDetailView(PermissionMixin, generics.RetrieveUpdateDestroyAPIView):
         return CourseSerializer
 
 
-class CourseSkillsListView(PermissionMixin, generics.ListAPIView):
+class CourseSkillView(PermissionMixin, generics.RetrieveAPIView):
     """
-    GET /api/courses/{course_id}/skills - Danh sách kỹ năng trong khóa học
+    GET /api/courses/{course_id}/skill/ - Lấy skill của course
     """
-    serializer_class = SkillSerializer
     permission_classes = [IsAuthenticated]
     permission_map = {
         'GET': 'view_courses',
     }
+    serializer_class = SkillSerializer
     
-    def get_queryset(self):
-        course_id = self.kwargs['course_id']
-        return Skill.objects.filter(course_id=course_id)
-
-
-class CourseSkillsCreateView(PermissionMixin, generics.CreateAPIView):
-    """
-    POST /api/courses/{course_id}/skills - Thêm skill mới vào khóa học
-    """
-    serializer_class = SkillCreateUpdateSerializer
-    permission_classes = [IsAuthenticated]
-    permission_map = {
-        'POST': 'manage_courses',
-    }
-    
-    def perform_create(self, serializer):
+    def get_object(self):
         course_id = self.kwargs['course_id']
         course = get_object_or_404(Course, pk=course_id)
-        serializer.save(course=course)
+        if not course.skill:
+            from rest_framework.exceptions import NotFound
+            raise NotFound('Course has no skill assigned')
+        return course.skill
+    
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response({
+            'success': True,
+            'data': serializer.data
+        })
+
+
+class CourseAssignSkillView(PermissionMixin, APIView):
+    """
+    PATCH /api/courses/{course_id}/assign-skill/ - Gán skill cho course
+    Body: {"skill_id": "uuid"}
+    """
+    permission_classes = [IsAuthenticated]
+    permission_map = {
+        'PATCH': 'manage_courses',
+    }
+    
+    def patch(self, request, course_id):
+        course = get_object_or_404(Course, pk=course_id)
+        skill_id = request.data.get('skill_id')
+        
+        if skill_id is None:
+            # Cho phép xóa skill (set null)
+            course.skill = None
+            course.save()
+            return Response({
+                'success': True,
+                'message': 'Skill removed from course'
+            })
+        
+        try:
+            skill = Skill.objects.get(pk=skill_id)
+            course.skill = skill
+            course.save()
+            
+            serializer = CourseDetailSerializer(course)
+            return Response({
+                'success': True,
+                'message': 'Skill assigned successfully',
+                'data': serializer.data
+            })
+        except Skill.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': 'Skill not found'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+
+class CourseEligibleClassesView(PermissionMixin, APIView):
+    """
+    GET /api/courses/courses/{course_id}/eligible-classes/
+    
+    Lấy danh sách lớp học eligible cho khóa học
+    Filter:
+    - course_id = course_id
+    - status = 'planned' (chỉ lớp chưa bắt đầu)
+    - teacher_id IS NOT NULL (phải có giáo viên)
+    - current_student_count < limit_slot (còn slot)
+    - Query param: campus_id (optional)
+    """
+    permission_classes = [IsAuthenticated]
+    permission_map = {
+        'GET': 'view_classes',
+    }
+    
+    def get(self, request, course_id):
+        from classes.models import Class
+        
+        course = get_object_or_404(Course, pk=course_id)
+        
+        # Filter classes
+        queryset = Class.objects.filter(
+            course=course,
+            status=Class.Status.PLANNED,
+            teacher__isnull=False
+        ).select_related('teacher', 'campus', 'course')
+        
+        # Filter theo campus (optional)
+        campus_id = request.query_params.get('campus_id')
+        if campus_id:
+            queryset = queryset.filter(campus_id=campus_id)
+        
+        # Tính is_available và available_slots
+        result = []
+        for cls in queryset:
+            # Kiểm tra còn slot không
+            is_available = (
+                cls.status == Class.Status.PLANNED and
+                cls.teacher_id is not None and
+                (cls.limit_slot is None or cls.current_student_count < cls.limit_slot)
+            )
+            
+            # Tính available_slots
+            if cls.limit_slot is None:
+                available_slots = None  # Không giới hạn
+            else:
+                available_slots = max(0, cls.limit_slot - cls.current_student_count)
+            
+            # Format weekday
+            weekday_names = {
+                1: 'Thứ 2',
+                2: 'Thứ 3',
+                3: 'Thứ 4',
+                4: 'Thứ 5',
+                5: 'Thứ 6',
+                6: 'Thứ 7',
+                7: 'Chủ nhật'
+            }
+            weekday_display = [weekday_names.get(d, str(d)) for d in (cls.weekday or [])]
+            
+            class_data = {
+                'id': str(cls.id),
+                'name': cls.name,
+                'teacher_name': cls.teacher.user_account.fullname if cls.teacher else None,
+                'teacher_id': str(cls.teacher.id) if cls.teacher else None,
+                'start_date': cls.start_date.isoformat() if cls.start_date else None,
+                'end_date': cls.end_date.isoformat() if cls.end_date else None,
+                'current_student_count': cls.current_student_count,
+                'limit_slot': cls.limit_slot,
+                'available_slots': available_slots,
+                'status': cls.status,
+                'is_available': is_available,
+                'fee': course.fee,
+                'campus': {
+                    'id': str(cls.campus.id) if cls.campus else None,
+                    'name': cls.campus.name if cls.campus else None
+                } if cls.campus else None,
+                'weekday': cls.weekday or [],
+                'weekday_display': weekday_display,
+                'time_slot': cls.time_slot
+            }
+            
+            result.append(class_data)
+        
+        return Response({
+            'success': True,
+            'data': result
+        })
 
 
 class CourseClassesListView(PermissionMixin, generics.ListAPIView):

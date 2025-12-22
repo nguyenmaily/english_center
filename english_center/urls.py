@@ -56,6 +56,7 @@ urlpatterns = [
     path('api/class-sessions/', include('class_sessions.urls')),
     path('api/requests/', include('requests.urls')),
     path('api/tests/', include('tests.urls')),
+    path('api/proficiency/', include('proficiency.urls')),
 
 
     # # Web pages (templates)

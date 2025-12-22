@@ -12,12 +12,44 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 
 from pathlib import Path
 import os
-
-
-
+from decouple import config, Config, RepositoryEnv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Đảm bảo python-decouple tìm được .env file
+# Tìm .env file từ BASE_DIR (thư mục chứa manage.py)
+env_path = BASE_DIR / '.env'
+if env_path.exists():
+    # Sử dụng Config với RepositoryEnv để chỉ định đường dẫn cụ thể
+    env_config = Config(RepositoryEnv(str(env_path)))
+    # Override config function để sử dụng env_config
+    def get_config(key, default=None):
+        return env_config(key, default=default)
+    config = get_config
+else:
+    # Fallback về config mặc định nếu không tìm thấy .env
+    pass  # config đã được import từ decouple
+
+# Google Cloud Vision API
+# Ưu tiên: 1. Environment variable, 2. File trong folder credentials
+GOOGLE_VISION_CREDENTIALS_PATH = config(
+    'GOOGLE_VISION_CREDENTIALS_PATH',
+    default=None
+)
+
+# Nếu không có trong env, tự động tìm trong folder credentials (cách 1)
+if not GOOGLE_VISION_CREDENTIALS_PATH:
+    default_credentials_path = BASE_DIR / 'proficiency' / 'credentials' / 'google_vision_credentials.json'
+    if default_credentials_path.exists():
+        GOOGLE_VISION_CREDENTIALS_PATH = str(default_credentials_path)
+
+# VNPay Configuration
+VNPAY_TMN_CODE = config('VNPAY_TMN_CODE', default='')
+VNPAY_HASH_SECRET = config('VNPAY_HASH_SECRET', default='')
+VNPAY_URL = config('VNPAY_URL', default='https://sandbox.vnpayment.vn/paymentv2/vpcpay.html')
+VNPAY_RETURN_URL = config('VNPAY_RETURN_URL', default='http://localhost:8000/api/enrollment/payments/vnpay/return/')
+VNPAY_IPN_URL = config('VNPAY_IPN_URL', default='http://localhost:8000/api/enrollment/payments/vnpay/notify/')
 
 
 # Quick-start development settings - unsuitable for production
@@ -65,6 +97,7 @@ INSTALLED_APPS = [
     'class_sessions',
     'requests',
     'tests',
+    'proficiency',
 
 ]
 
@@ -114,9 +147,9 @@ DATABASES = {
     'default': {
 
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'english_center_db',
+        'NAME': 'english_center_db_utf8',
         'USER': 'postgres',
-        'PASSWORD': 'nhungtran2708',  # Password bạn đã đặt
+        'PASSWORD': 'Maily@1407',  # Password bạn đã đặt
         'HOST': 'localhost',
         'PORT': '5432',
     }
@@ -263,3 +296,11 @@ MEDIA_ROOT = BASE_DIR / 'media'
 
 # Static files
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+# Google OAuth Configuration
+GOOGLE_OAUTH2_CLIENT_ID = config('GOOGLE_OAUTH2_CLIENT_ID', default=None)
+GOOGLE_OAUTH2_CLIENT_SECRET = config('GOOGLE_OAUTH2_CLIENT_SECRET', default=None)
+
+# Frontend URLs (optional)
+FRONTEND_URL = config('FRONTEND_URL', default='http://localhost:5500')
+FRONTEND_LOGIN_PAGE = config('FRONTEND_LOGIN_PAGE', default='/login.html')
