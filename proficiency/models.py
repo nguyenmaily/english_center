@@ -20,6 +20,7 @@ class StudentCertificate(models.Model):
         """Enum cho source_type"""
         CERTIFICATE = 'certificate', 'Chứng chỉ'
         ENTRY_TEST = 'entry_test', 'Test đầu vào'
+        MIDTERM_TEST = 'midterm_test', 'Test giữa khóa'
         FINAL_TEST = 'final_test', 'Test cuối khóa'
     
     class Status(models.TextChoices):
@@ -53,7 +54,7 @@ class StudentCertificate(models.Model):
         max_length=20,
         choices=SourceType.choices,
         db_column='source_type',
-        help_text='certificate: Chứng chỉ; entry_test: Test đầu vào; final_test: Test cuối khóa'
+        help_text='certificate: Chứng chỉ; entry_test: Test đầu vào; midterm_test: Test giữa khóa; final_test: Test cuối khóa'
     )
     
     score_1 = models.IntegerField(

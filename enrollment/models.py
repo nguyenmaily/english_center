@@ -11,10 +11,13 @@ class Enrollment(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     notes = models.TextField(blank=True, null=True)
     student_id = models.UUIDField()
-    class_id = models.UUIDField()
+    class_id = models.UUIDField(null=True, blank=True)  # Có thể NULL khi bảo lưu
+    course_id = models.UUIDField(null=True, blank=True)  # Thêm trường course_id
 
     class Meta:
         db_table = 'enrollments'
         managed = False
+        # Giữ unique constraint cho (student_id, class_id) khi class_id không NULL
+        # PostgreSQL cho phép nhiều NULL trong unique constraint
         unique_together = ('student_id', 'class_id')
 

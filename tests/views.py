@@ -15,6 +15,240 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 
+def update_student_certificate_from_exam_result(exam_result):
+    """
+    Cập nhật StudentCertificate từ ExamResult
+    
+    Được gọi thủ công từ finish_exam vì ExamResult có managed=False
+    nên signal post_save không tự động trigger khi update bằng raw SQL.
+    
+    Logic:
+    - Tìm record mới nhất với cùng source_type và skill_group
+    - Nếu có và test_date khác nhau → Tạo mới (lưu lịch sử)
+    - Nếu có và test_date giống nhau → Update record đó
+    - Nếu không có → Tạo mới
+    
+    Đảm bảo kết quả test gần nhất luôn được lưu vào bảng student_certificates.
+    """
+    try:
+        logger.info(f"🔄 ===== STARTING certificate update =====")
+        print(f"[UPDATE_CERTIFICATE] 🔄 ===== STARTING certificate update =====")
+        logger.info(f"🔄 Exam result ID: {exam_result.id}")
+        print(f"[UPDATE_CERTIFICATE] 🔄 Exam result ID: {exam_result.id}")
+        logger.info(f"🔄 Status: {exam_result.status}")
+        print(f"[UPDATE_CERTIFICATE] 🔄 Status: {exam_result.status}")
+        logger.info(f"🔄 Score: {exam_result.score} (type: {type(exam_result.score)})")
+        print(f"[UPDATE_CERTIFICATE] 🔄 Score: {exam_result.score} (type: {type(exam_result.score)})")
+        logger.info(f"🔄 Student ID: {exam_result.student_id}")
+        print(f"[UPDATE_CERTIFICATE] 🔄 Student ID: {exam_result.student_id}")
+        logger.info(f"🔄 Exam Instance ID: {exam_result.exam_instance_id}")
+        print(f"[UPDATE_CERTIFICATE] 🔄 Exam Instance ID: {exam_result.exam_instance_id}")
+        logger.info(f"🔄 Submitted At: {exam_result.submitted_at}")
+        print(f"[UPDATE_CERTIFICATE] 🔄 Submitted At: {exam_result.submitted_at}")
+        
+        # Chỉ xử lý khi exam đã completed và có score
+        if exam_result.status != 'completed' or exam_result.score is None:
+            logger.warning(f"⚠️ Skipping certificate update: status={exam_result.status}, score={exam_result.score}")
+            print(f"[UPDATE_CERTIFICATE] ⚠️ Skipping certificate update: status={exam_result.status}, score={exam_result.score}")
+            return
+        
+        # Lấy exam instance để kiểm tra exam_type
+        exam_instance = ExamInstance.objects.get(id=exam_result.exam_instance_id)
+        logger.info(f"📋 Exam instance: {exam_instance.id}, title={exam_instance.title}, exam_type={exam_instance.exam_type}")
+        print(f"[UPDATE_CERTIFICATE] 📋 Exam instance: {exam_instance.id}, title={exam_instance.title}, exam_type={exam_instance.exam_type}")
+        
+        # Nếu exam_instance không có exam_type, lấy từ blueprint
+        exam_type = exam_instance.exam_type
+        if not exam_type and exam_instance.blueprint_id:
+            try:
+                blueprint = ExamBlueprint.objects.get(id=exam_instance.blueprint_id)
+                exam_type = blueprint.exam_type
+                logger.info(f"📋 Using exam_type from blueprint: {exam_type}")
+                print(f"[UPDATE_CERTIFICATE] 📋 Using exam_type from blueprint: {exam_type}")
+            except ExamBlueprint.DoesNotExist:
+                logger.warning(f"⚠️ Blueprint not found: {exam_instance.blueprint_id}")
+                print(f"[UPDATE_CERTIFICATE] ⚠️ Blueprint not found: {exam_instance.blueprint_id}")
+        
+        # Chỉ xử lý final test, midterm test hoặc placement test
+        if exam_type not in ['final', 'midterm', 'placement']:
+            logger.warning(f"⚠️ Skipping certificate update: exam_type={exam_type} (not 'final', 'midterm' or 'placement')")
+            print(f"[UPDATE_CERTIFICATE] ⚠️ Skipping certificate update: exam_type={exam_type} (not 'final', 'midterm' or 'placement')")
+            return
+        
+        # Cập nhật exam_instance.exam_type để sử dụng trong các bước tiếp theo
+        exam_instance.exam_type = exam_type
+        
+        # Import StudentCertificate trước khi sử dụng
+        from proficiency.models import StudentCertificate
+        
+        # Lấy student
+        from users.models import Student
+        try:
+            student = Student.objects.get(id=exam_result.student_id)
+            logger.info(f"✅ Student found: {student.id}")
+            print(f"[UPDATE_CERTIFICATE] ✅ Student found: {student.id}")
+        except Student.DoesNotExist:
+            logger.warning(f"⚠️ Student not found: {exam_result.student_id}")
+            print(f"[UPDATE_CERTIFICATE] ⚠️ Student not found: {exam_result.student_id}")
+            return
+        
+        # Xác định skill_group từ exam
+        skill_group = _determine_skill_group_from_exam_for_certificate(exam_instance)
+        
+        # Mặc định skill_group là LR nếu không xác định được
+        # Đảm bảo luôn có skill_group để lưu vào student_certificates
+        if not skill_group:
+            logger.info(f"⚠️ Could not determine skill_group for exam {exam_instance.id}, using default LR")
+            skill_group = StudentCertificate.SkillGroup.LR
+        else:
+            logger.info(f"✅ Determined skill_group: {skill_group} for exam {exam_instance.id}")
+        
+        # Tính điểm theo skill_group
+        # Score từ ExamResult là % (0-100), cần convert sang điểm TOEIC
+        from proficiency.signals import _convert_percentage_to_toeic_score
+        
+        logger.info(f"🔄 Converting score: {exam_result.score}% (type: {type(exam_result.score)}), skill_group: {skill_group} (type: {type(skill_group)})")
+        
+        try:
+            total_score = _convert_percentage_to_toeic_score(float(exam_result.score), skill_group)
+            logger.info(f"📊 Score conversion result: {exam_result.score}% → {total_score} TOEIC ({skill_group})")
+        except Exception as conv_error:
+            logger.error(f"❌ Error converting score: {str(conv_error)}", exc_info=True)
+            return
+        
+        if total_score is None:
+            logger.error(f"❌ Could not convert score {exam_result.score}% to TOEIC score for skill_group {skill_group}")
+            return
+        
+        logger.info(f"✅ Successfully converted score: {exam_result.score}% → {total_score} TOEIC")
+        
+        # Xác định source_type (sử dụng exam_type đã được xác định ở trên)
+        if exam_type == 'placement':
+            source_type = StudentCertificate.SourceType.ENTRY_TEST
+        elif exam_type == 'midterm':
+            source_type = StudentCertificate.SourceType.MIDTERM_TEST
+        else:  # final
+            source_type = StudentCertificate.SourceType.FINAL_TEST
+        
+        # Lấy test_date từ exam_result.submitted_at
+        from django.utils import timezone
+        test_date = exam_result.submitted_at.date() if exam_result.submitted_at else timezone.now().date()
+        
+        # Tìm record mới nhất với cùng source_type và skill_group
+        # CHỈ tìm records có source_type='entry_test', 'midterm_test' hoặc 'final_test'
+        # KHÔNG động vào records có source_type='certificate' (chứng chỉ upload)
+        latest_certificate = StudentCertificate.objects.filter(
+            student=student,
+            source_type=source_type,  # Filter theo entry_test, midterm_test hoặc final_test
+            skill_group=skill_group
+        ).order_by('-test_date', '-created_at').first()
+        
+        test_type_name = 'placement test' if exam_type == 'placement' else ('midterm test' if exam_type == 'midterm' else 'final test')
+        
+        logger.info(f"🔍 Looking for existing certificate: student={student.id}, source_type={source_type}, skill_group={skill_group}")
+        logger.info(f"📊 Certificate data to save: total_score={total_score}, test_date={test_date}, source_type={source_type}, skill_group={skill_group}")
+        
+        if latest_certificate:
+            # Luôn update record mới nhất với kết quả test mới nhất
+            # Đảm bảo kết quả test gần nhất luôn được lưu vào bảng student_certificates
+            old_score = latest_certificate.total_score
+            old_test_date = latest_certificate.test_date
+            
+            logger.info(f"📝 Updating existing certificate ID: {latest_certificate.id}, old_score: {old_score}, new_score: {total_score}")
+            
+            latest_certificate.total_score = total_score
+            latest_certificate.test_date = test_date
+            latest_certificate.expired_date = StudentCertificate.calculate_expired_date_for_test()
+            latest_certificate.status = StudentCertificate.Status.VERIFIED
+            latest_certificate.verification_method = StudentCertificate.VerificationMethod.AUTO_OCR
+            
+            try:
+                latest_certificate.save()
+                logger.info(f"✅ Successfully updated latest {test_type_name} certificate (ID: {latest_certificate.id}) for student {student.id}, skill_group {skill_group}, score: {old_score} → {total_score}, test_date: {old_test_date} → {test_date}")
+            except Exception as save_error:
+                logger.error(f"❌ Error saving certificate: {str(save_error)}", exc_info=True)
+                raise
+        else:
+            # Tạo mới nếu chưa có record nào
+            logger.info(f"📝 Creating new certificate for student {student.id}")
+            try:
+                certificate = StudentCertificate.objects.create(
+                    student=student,
+                    source_type=source_type,
+                    skill_group=skill_group,
+                    total_score=total_score,
+                    test_date=test_date,
+                    expired_date=StudentCertificate.calculate_expired_date_for_test(),
+                    status=StudentCertificate.Status.VERIFIED,
+                    verification_method=StudentCertificate.VerificationMethod.AUTO_OCR,
+                )
+                logger.info(f"✅ Successfully created new {test_type_name} certificate (ID: {certificate.id}) for student {student.id}, skill_group {skill_group}, score {total_score}, test_date {test_date}")
+            except Exception as create_error:
+                logger.error(f"❌ Error creating certificate: {str(create_error)}", exc_info=True)
+                raise
+    
+    except ExamInstance.DoesNotExist:
+        logger.warning(f"ExamInstance not found: {exam_result.exam_instance_id}")
+    except Exception as e:
+        logger.error(f"Error updating StudentCertificate from exam result: {e}", exc_info=True)
+        raise
+
+
+def _determine_skill_group_from_exam_for_certificate(exam_instance):
+    """
+    Xác định skill_group từ exam instance
+    
+    Helper function để xác định skill_group từ exam title hoặc questions
+    Nếu không xác định được, trả về None (sẽ được xử lý ở hàm gọi)
+    """
+    from proficiency.models import StudentCertificate
+    
+    title = exam_instance.title.upper() if exam_instance.title else ""
+    
+    # Kiểm tra title
+    if 'LR' in title or ('LISTENING' in title and 'READING' in title):
+        return StudentCertificate.SkillGroup.LR
+    elif 'SW' in title or ('SPEAKING' in title and 'WRITING' in title):
+        return StudentCertificate.SkillGroup.SW
+    
+    # Nếu không xác định được từ title, kiểm tra questions
+    try:
+        exam_questions = ExamInstanceQuestion.objects.filter(exam_instance_id=exam_instance.id)
+        
+        if exam_questions.exists():
+            # Lấy skill từ question đầu tiên
+            first_question = Question.objects.filter(
+                id=exam_questions.first().question_id
+            ).first()
+            
+            if first_question and first_question.skill:
+                skill = first_question.skill.upper()
+                if 'LISTENING' in skill or 'READING' in skill:
+                    return StudentCertificate.SkillGroup.LR
+                elif 'SPEAKING' in skill or 'WRITING' in skill:
+                    return StudentCertificate.SkillGroup.SW
+            
+            # Nếu không có skill trong question, kiểm tra part
+            if first_question and first_question.part:
+                part = first_question.part.upper()
+                # Part 1-4 thường là Listening, Part 5-7 thường là Reading
+                if 'PART' in part:
+                    part_num = part.replace('PART', '').strip()
+                    try:
+                        part_num_int = int(part_num)
+                        if part_num_int <= 4:
+                            return StudentCertificate.SkillGroup.LR
+                        elif part_num_int >= 5:
+                            return StudentCertificate.SkillGroup.LR  # Reading cũng là LR
+                    except ValueError:
+                        pass
+    except Exception as e:
+        logger.warning(f"Error determining skill_group from questions: {e}")
+    
+    # Nếu không xác định được, trả về None (sẽ được xử lý ở hàm gọi)
+    return None
+
+
 class QuestionGroupSerializer(serializers.ModelSerializer):
     class Meta:
         model = QuestionGroup
@@ -546,8 +780,9 @@ class QuestionViewSet(viewsets.ModelViewSet):
             from django.core.files.base import ContentFile
             from datetime import datetime
             
-            # Handle file uploads
-            data = request.data.copy()
+            # Handle file uploads - process files first before copying data
+            # Cannot use request.data.copy() when there are file uploads
+            audio_file_url = None
             
             # Handle audio file upload
             if 'audio_file' in request.FILES:
@@ -556,9 +791,16 @@ class QuestionViewSet(viewsets.ModelViewSet):
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                 filename = f"questions/audio_{timestamp}_{audio_file.name}"
                 file_path = default_storage.save(filename, ContentFile(audio_file.read()))
-                data['audio_file'] = default_storage.url(file_path)
-            elif 'audio_file' not in data:
-                data['audio_file'] = None
+                audio_file_url = default_storage.url(file_path)
+            
+            # Create data dict from request.data, excluding file fields
+            data = {}
+            for key, value in request.data.items():
+                if key != 'audio_file':  # Skip audio_file as it's handled separately
+                    data[key] = value
+            
+            # Add audio_file URL if uploaded
+            data['audio_file'] = audio_file_url
             
             serializer = self.get_serializer(data=data)
             serializer.is_valid(raise_exception=True)
@@ -925,11 +1167,13 @@ class ExamInstanceViewSet(viewsets.ModelViewSet):
             selected_questions.extend(selected)
         
         # Create exam instance
+        # Copy exam_type from blueprint to exam_instance
         exam = ExamInstance.objects.create(
             blueprint_id=blueprint_id,
             title=name,
             status='published',
-            class_id=class_id  # Assign to class if provided
+            class_id=class_id,  # Assign to class if provided
+            exam_type=blueprint.exam_type if blueprint.exam_type else None  # Copy exam_type from blueprint
         )
         
         # Create exam instance questions
@@ -1086,6 +1330,68 @@ class ExamInstanceViewSet(viewsets.ModelViewSet):
         except ExamInstanceQuestion.DoesNotExist:
             return Response({'detail': 'Question not found in this exam'}, status=status.HTTP_404_NOT_FOUND)
     
+    @action(detail=True, methods=['post'], url_path='regenerate-questions')
+    def regenerate_questions(self, request, pk=None):
+        """Regenerate questions for exam instance from blueprint"""
+        exam = self.get_object()
+        
+        if not exam.blueprint_id:
+            return Response({
+                'detail': 'Exam instance không có blueprint. Không thể regenerate questions.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            blueprint = ExamBlueprint.objects.get(id=exam.blueprint_id)
+        except ExamBlueprint.DoesNotExist:
+            return Response({'detail': 'Blueprint not found'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Get rules for this blueprint
+        rules = ExamRule.objects.filter(blueprint_id=exam.blueprint_id)
+        
+        if not rules.exists():
+            return Response({
+                'detail': 'Blueprint không có rules. Vui lòng thêm rules vào blueprint trước.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        selected_questions = []
+        
+        for rule in rules:
+            # Get questions matching the rule criteria
+            rule_questions = Question.objects.filter(
+                difficulty=rule.difficulty
+            )
+            
+            if len(rule_questions) < rule.num_questions:
+                logger.warning(f"Not enough questions for rule {rule.id}. Required: {rule.num_questions}, Available: {len(rule_questions)}")
+            
+            # Randomly select the required count
+            if len(rule_questions) > 0:
+                selected = random.sample(list(rule_questions), min(rule.num_questions, len(rule_questions)))
+                selected_questions.extend(selected)
+        
+        if len(selected_questions) == 0:
+            return Response({
+                'detail': 'Không tìm thấy câu hỏi phù hợp với rules của blueprint.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Delete existing questions
+        ExamInstanceQuestion.objects.filter(exam_instance_id=exam.id).delete()
+        
+        # Create new exam instance questions
+        for i, question in enumerate(selected_questions):
+            ExamInstanceQuestion.objects.create(
+                exam_instance_id=exam.id,
+                question_id=question.id,
+                order_number=i + 1
+            )
+        
+        logger.info(f"Regenerated {len(selected_questions)} questions for exam {exam.id}")
+        
+        return Response({
+            'detail': f'Đã thêm {len(selected_questions)} câu hỏi vào exam instance.',
+            'total_questions': len(selected_questions)
+        }, status=status.HTTP_200_OK)
+    
     @action(detail=False, methods=['get'], url_path='placement-tests')
     def placement_tests(self, request):
         """
@@ -1093,18 +1399,77 @@ class ExamInstanceViewSet(viewsets.ModelViewSet):
         
         Lấy danh sách placement tests (LR và SW)
         """
-        student_id = request.query_params.get('student_id')
-        if not student_id:
+        student_id_param = request.query_params.get('student_id')
+        if not student_id_param:
             return Response({
                 'success': False,
                 'error': 'student_id is required'
             }, status=status.HTTP_400_BAD_REQUEST)
         
+        logger.info(f"🔍 Placement tests API called with student_id_param: {student_id_param}")
+        
+        # Convert user_account_id to student_id if needed
+        actual_student_id = None
+        
+        # If authenticated, try to get student from user account
+        if request.user and request.user.is_authenticated:
+            try:
+                from users.models import Student
+                student = Student.objects.filter(user_account_id=request.user.id).first()
+                if student:
+                    actual_student_id = student.id
+                    logger.info(f"✅ Found student from authenticated user: {actual_student_id}")
+            except Exception as e:
+                logger.warning(f"Could not get student from authenticated user: {e}")
+        
+        # If not found from auth, try to use provided student_id_param
+        # Check if it's a valid student_id (exists in students table)
+        if not actual_student_id and student_id_param:
+            try:
+                from users.models import Student
+                # Check if student_id_param is a student_id
+                student = Student.objects.filter(id=student_id_param).first()
+                if not student:
+                    # Try to find by user_account_id (might be User ID)
+                    student = Student.objects.filter(user_account_id=student_id_param).first()
+                    if student:
+                        logger.info(f"✅ Found student by user_account_id: {student_id_param} → {student.id}")
+                if student:
+                    actual_student_id = student.id
+                    logger.info(f"✅ Found student from provided ID: {actual_student_id}")
+                else:
+                    logger.warning(f"❌ No student found for ID: {student_id_param}")
+            except Exception as e:
+                logger.error(f"Error converting student_id: {str(e)}", exc_info=True)
+        
+        if not actual_student_id:
+            logger.warning(f"⚠️ Could not determine actual student_id, using provided: {student_id_param}")
+            actual_student_id = student_id_param
+        
+        student_id = actual_student_id
+        logger.info(f"📌 Using student_id: {student_id}")
+        
         # Lọc exam instances với exam_type = 'placement'
-        placement_exams = ExamInstance.objects.filter(
-            exam_type='placement',
+        # Nếu exam_instance không có exam_type, check từ blueprint
+        published_exams = ExamInstance.objects.filter(
             status='published'  # Chỉ lấy exam đã publish
         ).order_by('title')
+        
+        # Filter exams có exam_type='placement' hoặc blueprint có exam_type='placement'
+        placement_exams = []
+        for exam in published_exams:
+            # Check exam_type từ exam_instance hoặc blueprint
+            exam_type = exam.exam_type
+            if not exam_type and exam.blueprint_id:
+                try:
+                    blueprint = ExamBlueprint.objects.get(id=exam.blueprint_id)
+                    exam_type = blueprint.exam_type if blueprint.exam_type else None
+                except ExamBlueprint.DoesNotExist:
+                    pass
+            
+            # Chỉ thêm nếu exam_type = 'placement'
+            if exam_type == 'placement':
+                placement_exams.append(exam)
         
         # Phân biệt LR và SW dựa vào title
         # Giả sử title có chứa "Listening" hoặc "Reading" → LR
@@ -1124,13 +1489,273 @@ class ExamInstanceViewSet(viewsets.ModelViewSet):
                 exam_instance_id=exam.id
             ).count()
             
+            # Lấy exam_type từ exam_instance hoặc blueprint
+            exam_type_value = exam.exam_type
+            if not exam_type_value and exam.blueprint_id:
+                try:
+                    blueprint = ExamBlueprint.objects.get(id=exam.blueprint_id)
+                    exam_type_value = blueprint.exam_type if blueprint.exam_type else None
+                except ExamBlueprint.DoesNotExist:
+                    pass
+            
+            # Check if student has completed this exam
+            exam_result = None
+            if student_id:
+                try:
+                    # First, check all exam results for this student and exam (any status)
+                    # Convert student_id to string to ensure matching
+                    student_id_str = str(student_id)
+                    exam_id_str = str(exam.id)
+                    
+                    all_results = ExamResult.objects.filter(
+                        student_id=student_id_str,
+                        exam_instance_id=exam_id_str
+                    ).order_by('-submitted_at', '-created_at')
+                    
+                    logger.info(f"🔍 Checking exam results for student {student_id}, exam {exam.id}: found {all_results.count()} results")
+                    for res in all_results:
+                        logger.info(f"  - Result {res.id}: status={res.status}, score={res.score}, submitted_at={res.submitted_at}")
+                    
+                    # Priority 1: Get completed result (most recent)
+                    exam_result = all_results.filter(status='completed').first()
+                    
+                    # Priority 2: If no completed result, check for any result with a score (might be graded)
+                    if not exam_result:
+                        exam_result = all_results.filter(score__isnull=False).exclude(score=0).first()
+                        if exam_result:
+                            logger.info(f"⚠️ Found exam result with score (status={exam_result.status}) for student {student_id}, exam {exam.id}: result_id={exam_result.id}, score={exam_result.score}")
+                    
+                    # Priority 3: If still no result, get the most recent one (might be in_progress)
+                    # But only if we want to show "continue exam" instead of "start exam"
+                    # For now, we only show completed exams, so skip this
+                    
+                    if exam_result:
+                        logger.info(f"✅ Using exam result for student {student_id}, exam {exam.id}: result_id={exam_result.id}, status={exam_result.status}, score={exam_result.score}")
+                    else:
+                        logger.info(f"❌ No completed exam result found for student {student_id}, exam {exam.id}")
+                except Exception as e:
+                    logger.error(f"❌ Error checking exam result: {str(e)}", exc_info=True)
+            
             exam_data = {
                 'id': str(exam.id),
                 'title': exam.title,
-                'exam_type': exam.exam_type,
+                'exam_type': exam_type_value or 'placement',
                 'skill_group': skill_group,
                 'status': exam.status,
-                'total_questions': question_count
+                'total_questions': question_count,
+                'has_completed': exam_result is not None,
+                'exam_result_id': str(exam_result.id) if exam_result else None,
+                'exam_result_score': float(exam_result.score) if exam_result and exam_result.score is not None else None,
+                'exam_result_submitted_at': exam_result.submitted_at.isoformat() if exam_result and exam_result.submitted_at else None
+            }
+            
+            logger.info(f"📊 Exam data for {exam.id}: has_completed={exam_data['has_completed']}, exam_result_id={exam_data['exam_result_id']}, score={exam_data['exam_result_score']}")
+            
+            # Thêm duration nếu có trong blueprint
+            if exam.blueprint_id:
+                try:
+                    blueprint = ExamBlueprint.objects.get(id=exam.blueprint_id)
+                    exam_data['duration'] = getattr(blueprint, 'duration', None)
+                except ExamBlueprint.DoesNotExist:
+                    pass
+            
+            result.append(exam_data)
+        
+        return Response({
+            'success': True,
+            'data': result
+        })
+    
+    @action(detail=False, methods=['get'], url_path='class-tests')
+    def class_tests(self, request):
+        """
+        GET /api/tests/exam-instances/class-tests/?student_id={student_id}&exam_type={midterm|final}
+        
+        Lấy danh sách midterm hoặc final tests theo lớp của học sinh
+        Học sinh phải có lớp mới được làm test giữa khóa và cuối khóa
+        """
+        student_id_param = request.query_params.get('student_id')
+        exam_type_param = request.query_params.get('exam_type')  # 'midterm' hoặc 'final'
+        
+        if not student_id_param:
+            return Response({
+                'success': False,
+                'error': 'student_id is required'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        if exam_type_param not in ['midterm', 'final']:
+            return Response({
+                'success': False,
+                'error': 'exam_type must be "midterm" or "final"'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        logger.info(f"🔍 Class tests API called: student_id={student_id_param}, exam_type={exam_type_param}")
+        
+        # Convert user_account_id to student_id if needed
+        actual_student_id = None
+        
+        # If authenticated, try to get student from user account
+        if request.user and request.user.is_authenticated:
+            try:
+                from users.models import Student
+                student = Student.objects.filter(user_account_id=request.user.id).first()
+                if student:
+                    actual_student_id = student.id
+                    logger.info(f"✅ Found student from authenticated user: {actual_student_id}")
+            except Exception as e:
+                logger.warning(f"Could not get student from authenticated user: {e}")
+        
+        # If not found from auth, try to use provided student_id_param
+        if not actual_student_id and student_id_param:
+            try:
+                from users.models import Student
+                student = Student.objects.filter(id=student_id_param).first()
+                if not student:
+                    student = Student.objects.filter(user_account_id=student_id_param).first()
+                    if student:
+                        logger.info(f"✅ Found student by user_account_id: {student_id_param} → {student.id}")
+                if student:
+                    actual_student_id = student.id
+                    logger.info(f"✅ Found student from provided ID: {actual_student_id}")
+                else:
+                    logger.warning(f"❌ No student found for ID: {student_id_param}")
+            except Exception as e:
+                logger.error(f"Error converting student_id: {str(e)}", exc_info=True)
+        
+        if not actual_student_id:
+            logger.warning(f"⚠️ Could not determine actual student_id, using provided: {student_id_param}")
+            actual_student_id = student_id_param
+        
+        student_id = actual_student_id
+        logger.info(f"📌 Using student_id: {student_id}")
+        
+        # Lấy danh sách lớp học của học sinh
+        from enrollment.models import Enrollment
+        enrollments = Enrollment.objects.filter(
+            student_id=student_id,
+            class_id__isnull=False  # Chỉ lấy enrollment có class_id (đã được gán lớp)
+        )
+        
+        class_ids = [str(e.class_id) for e in enrollments if e.class_id]
+        
+        if not class_ids:
+            logger.warning(f"⚠️ Student {student_id} has no classes enrolled")
+            return Response({
+                'success': True,
+                'data': [],
+                'message': 'Bạn chưa có lớp học. Vui lòng đăng ký lớp học trước khi làm bài test giữa khóa và cuối khóa.'
+            })
+        
+        logger.info(f"📚 Student {student_id} is enrolled in {len(class_ids)} classes: {class_ids}")
+        
+        # Lọc exam instances với exam_type = 'midterm' hoặc 'final' và class_id trong danh sách lớp của học sinh
+        published_exams = ExamInstance.objects.filter(
+            status='published',
+            class_id__in=class_ids  # Chỉ lấy exam của các lớp mà học sinh đang học
+        ).order_by('title')
+        
+        # Filter exams có exam_type='midterm' hoặc 'final' (hoặc từ blueprint)
+        class_exams = []
+        for exam in published_exams:
+            # Check exam_type từ exam_instance hoặc blueprint
+            exam_type = exam.exam_type
+            if not exam_type and exam.blueprint_id:
+                try:
+                    blueprint = ExamBlueprint.objects.get(id=exam.blueprint_id)
+                    exam_type = blueprint.exam_type if blueprint.exam_type else None
+                except ExamBlueprint.DoesNotExist:
+                    pass
+            
+            # Chỉ thêm nếu exam_type khớp với yêu cầu
+            if exam_type == exam_type_param:
+                class_exams.append(exam)
+        
+        logger.info(f"📋 Found {len(class_exams)} {exam_type_param} exams for student's classes")
+        
+        # Phân biệt LR và SW dựa vào title
+        result = []
+        for exam in class_exams:
+            title_upper = exam.title.upper()
+            skill_group = None
+            
+            if 'LISTENING' in title_upper or 'READING' in title_upper:
+                skill_group = 'LR'
+            elif 'SPEAKING' in title_upper or 'WRITING' in title_upper:
+                skill_group = 'SW'
+            
+            # Lấy số câu hỏi từ exam instance questions
+            question_count = ExamInstanceQuestion.objects.filter(
+                exam_instance_id=exam.id
+            ).count()
+            
+            # Lấy exam_type từ exam_instance hoặc blueprint
+            exam_type_value = exam.exam_type
+            if not exam_type_value and exam.blueprint_id:
+                try:
+                    blueprint = ExamBlueprint.objects.get(id=exam.blueprint_id)
+                    exam_type_value = blueprint.exam_type if blueprint.exam_type else None
+                except ExamBlueprint.DoesNotExist:
+                    pass
+            
+            # Lấy thông tin lớp học
+            class_info = None
+            if exam.class_id:
+                try:
+                    from classes.models import Class
+                    cls = Class.objects.get(id=exam.class_id)
+                    class_info = {
+                        'id': str(cls.id),
+                        'name': cls.name,
+                        'course_name': None  # Có thể thêm nếu cần
+                    }
+                    # Lấy course name nếu có
+                    if cls.course_id:
+                        try:
+                            from courses.models import Course
+                            course = Course.objects.get(id=cls.course_id)
+                            class_info['course_name'] = course.name
+                        except:
+                            pass
+                except Exception as e:
+                    logger.warning(f"Could not get class info for {exam.class_id}: {e}")
+            
+            # Check if student has completed this exam
+            exam_result = None
+            if student_id:
+                try:
+                    student_id_str = str(student_id)
+                    exam_id_str = str(exam.id)
+                    
+                    all_results = ExamResult.objects.filter(
+                        student_id=student_id_str,
+                        exam_instance_id=exam_id_str
+                    ).order_by('-submitted_at', '-created_at')
+                    
+                    # Priority 1: Get completed result (most recent)
+                    exam_result = all_results.filter(status='completed').first()
+                    
+                    # Priority 2: If no completed result, check for any result with a score
+                    if not exam_result:
+                        exam_result = all_results.filter(score__isnull=False).exclude(score=0).first()
+                    
+                    if exam_result:
+                        logger.info(f"✅ Found exam result for student {student_id}, exam {exam.id}: result_id={exam_result.id}, status={exam_result.status}, score={exam_result.score}")
+                except Exception as e:
+                    logger.error(f"❌ Error checking exam result: {str(e)}", exc_info=True)
+            
+            exam_data = {
+                'id': str(exam.id),
+                'title': exam.title,
+                'exam_type': exam_type_value or exam_type_param,
+                'skill_group': skill_group,
+                'status': exam.status,
+                'total_questions': question_count,
+                'class_id': str(exam.class_id) if exam.class_id else None,
+                'class_info': class_info,
+                'has_completed': exam_result is not None,
+                'exam_result_id': str(exam_result.id) if exam_result else None,
+                'exam_result_score': float(exam_result.score) if exam_result and exam_result.score is not None else None,
+                'exam_result_submitted_at': exam_result.submitted_at.isoformat() if exam_result and exam_result.submitted_at else None
             }
             
             # Thêm duration nếu có trong blueprint
@@ -1148,38 +1773,147 @@ class ExamInstanceViewSet(viewsets.ModelViewSet):
             'data': result
         })
     
-    @action(detail=True, methods=['get'], url_path='start')
+    @action(detail=True, methods=['get', 'post'], url_path='start')
     def start_exam(self, request, pk=None):
-        """Student starts exam"""
-        exam = self.get_object()
-        student_id = request.query_params.get('student_id')
-        
-        if not student_id:
-            return Response({'detail': 'student_id is required'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Check if student already has a result for this exam
-        existing_result = ExamResult.objects.filter(
-            student_id=student_id,
-            exam_instance_id=exam.id,
-            status='in_progress'
-        ).first()
-        
-        if existing_result:
-            return Response(ExamResultSerializer(existing_result).data)
-        
-        # Create new exam result
-        result = ExamResult.objects.create(
-            student_id=student_id,
-            exam_instance_id=exam.id,
-            status='in_progress'
-        )
-        
-        return Response(ExamResultSerializer(result).data)
+        """Student starts exam - supports both GET and POST"""
+        try:
+            exam = self.get_object()
+            
+            # Get student_id - can be from query params, request data, or authenticated user
+            student_id_param = request.query_params.get('student_id') or request.data.get('student_id')
+            
+            # If authenticated, try to get student from user account
+            actual_student_id = None
+            if request.user and request.user.is_authenticated:
+                try:
+                    from users.models import Student
+                    # Try to get student by user_account
+                    student = Student.objects.filter(user_account_id=request.user.id).first()
+                    if student:
+                        actual_student_id = student.id
+                        logger.info(f"Found student from authenticated user: {actual_student_id}")
+                except Exception as e:
+                    logger.warning(f"Could not get student from authenticated user: {e}")
+            
+            # If not found from auth, try to use provided student_id
+            # But first check if it's a valid student_id (exists in students table)
+            if not actual_student_id and student_id_param:
+                try:
+                    from users.models import Student
+                    # Check if student_id_param is a user_account_id or student_id
+                    student = Student.objects.filter(id=student_id_param).first()
+                    if not student:
+                        # Try to find by user_account_id
+                        student = Student.objects.filter(user_account_id=student_id_param).first()
+                    if student:
+                        actual_student_id = student.id
+                        logger.info(f"Found student from provided ID: {actual_student_id}")
+                except Exception as e:
+                    logger.warning(f"Could not get student from provided ID: {e}")
+            
+            if not actual_student_id:
+                return Response({
+                    'detail': 'Không thể xác định học viên. Vui lòng đăng nhập lại hoặc cung cấp student_id hợp lệ.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            student_id = actual_student_id
+            logger.info(f"Starting exam: exam_id={exam.id}, student_id={student_id}")
+            
+            # Check if student already has a result for this exam (any status)
+            existing_result = ExamResult.objects.filter(
+                student_id=student_id,
+                exam_instance_id=exam.id
+            ).first()
+            
+            if existing_result:
+                logger.info(f"Found existing result: {existing_result.id}, status: {existing_result.status}")
+                # If completed, return result with flag to show result page
+                if existing_result.status == 'completed':
+                    serializer = ExamResultSerializer(existing_result)
+                    result_data = serializer.data
+                    # Add flag to indicate exam is completed
+                    if isinstance(result_data, dict):
+                        result_data['already_completed'] = True
+                    return Response(result_data)
+                # If in_progress, return existing result
+                serializer = ExamResultSerializer(existing_result)
+                return Response(serializer.data)
+            
+            # Create new exam result
+            # Since ExamResult has managed=False, we need to use raw SQL or handle it carefully
+            logger.info(f"Creating new exam result for exam_id={exam.id}, student_id={student_id}")
+            
+            from django.db import connection
+            from django.utils import timezone
+            import uuid
+            
+            result_id = uuid.uuid4()
+            now = timezone.now()
+            
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute("""
+                        INSERT INTO exam_results 
+                        (id, exam_instance_id, student_id, status, submitted_at, created_at, updated_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """, [
+                        str(result_id),
+                        str(exam.id),
+                        str(student_id),
+                        'in_progress',
+                        now,
+                        now,
+                        now
+                    ])
+                
+                # Get the created result
+                result = ExamResult.objects.get(id=result_id)
+                logger.info(f"Created exam result: {result.id}")
+                serializer = ExamResultSerializer(result)
+                return Response(serializer.data)
+                
+            except Exception as db_error:
+                # Check if it's a unique constraint violation
+                error_msg = str(db_error)
+                if 'unique' in error_msg.lower() or 'duplicate' in error_msg.lower():
+                    logger.warning(f"Unique constraint violation, getting existing result")
+                    # Get existing result
+                    existing_result = ExamResult.objects.filter(
+                        student_id=student_id,
+                        exam_instance_id=exam.id
+                    ).first()
+                    if existing_result:
+                        serializer = ExamResultSerializer(existing_result)
+                        return Response(serializer.data)
+                raise db_error
+            
+        except Exception as e:
+            logger.error(f"Error starting exam: {str(e)}", exc_info=True)
+            return Response({
+                'detail': f'Lỗi khi bắt đầu bài test: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 # Exam Result Views
 class ExamResultViewSet(viewsets.ModelViewSet):
     queryset = ExamResult.objects.all().order_by('-submitted_at')
+    
+    def _clean_text(self, text):
+        """Clean text to handle encoding issues"""
+        if text is None:
+            return None
+        try:
+            # Try to decode if it's bytes
+            if isinstance(text, bytes):
+                text = text.decode('utf-8', errors='ignore')
+            # Normalize unicode
+            text = unicodedata.normalize('NFKC', str(text))
+            # Remove null bytes
+            text = text.replace('\x00', '')
+            return str(text).encode('utf-8', errors='ignore').decode('utf-8')
+        except Exception as e:
+            logger.warning(f"Error cleaning text: {str(e)}")
+            return str(text).encode('utf-8', errors='ignore').decode('utf-8')
     serializer_class = ExamResultSerializer
 
     def list(self, request, *args, **kwargs):
@@ -1252,43 +1986,133 @@ class ExamResultViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='finish')
     def finish_exam(self, request, pk=None):
         """Finish exam and calculate score"""
-        result = self.get_object()
-        
-        if result.status == 'completed':
-            return Response({'detail': 'Exam already completed'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Calculate score
-        correct_count = 0
-        total_questions = 0
-        
-        # Get exam instance questions
-        exam_questions = ExamInstanceQuestion.objects.filter(exam_instance_id=result.exam_instance_id)
-        total_questions = exam_questions.count()
-        
-        for exam_question in exam_questions:
-            question = Question.objects.get(id=exam_question.question_id)
-            exam_answer = ExamAnswer.objects.filter(
-                result_id=result.id,
-                question_id=question.id
-            ).first()
+        try:
+            try:
+                result = self.get_object()
+            except ExamResult.DoesNotExist:
+                logger.error(f"Exam result not found: {pk}")
+                return Response({
+                    'detail': f'Không tìm thấy kết quả bài test với ID: {pk}'
+                }, status=status.HTTP_404_NOT_FOUND)
+            except Exception as e:
+                logger.error(f"Error getting exam result: {str(e)}")
+                return Response({
+                    'detail': f'Lỗi khi lấy thông tin bài test: {str(e)}'
+                }, status=status.HTTP_400_BAD_REQUEST)
             
-            if exam_answer and exam_answer.selected_answer == question.correct_answer:
-                correct_count += 1
-                exam_answer.is_correct = True
-                exam_answer.save(update_fields=['is_correct'])
-            elif exam_answer:
-                exam_answer.is_correct = False
-                exam_answer.save(update_fields=['is_correct'])
-        
-        # Update result
-        result.score = (correct_count / total_questions) * 100 if total_questions > 0 else 0
-        result.status = 'completed'
-        result.save(update_fields=['score', 'status'])
-        
-        # Signal sẽ tự động cập nhật StudentCertificate nếu là final test
-        # (xem proficiency/signals.py)
-        
-        return Response(ExamResultSerializer(result).data)
+            logger.info(f"Finishing exam result: {result.id}, current status: {result.status}")
+            
+            if result.status == 'completed':
+                logger.warning(f"Exam result {result.id} already completed")
+                return Response({
+                    'detail': 'Exam already completed',
+                    'exam_result_id': str(result.id)
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Calculate score
+            correct_count = 0
+            total_questions = 0
+            
+            # Get exam instance questions
+            exam_questions = ExamInstanceQuestion.objects.filter(exam_instance_id=result.exam_instance_id)
+            total_questions = exam_questions.count()
+            
+            logger.info(f"Exam has {total_questions} questions")
+            
+            if total_questions == 0:
+                logger.warning(f"Exam instance {result.exam_instance_id} has no questions")
+                return Response({
+                    'detail': 'Exam instance không có câu hỏi. Không thể chấm điểm.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            for exam_question in exam_questions:
+                try:
+                    question = Question.objects.get(id=exam_question.question_id)
+                    exam_answer = ExamAnswer.objects.filter(
+                        result_id=result.id,
+                        question_id=question.id
+                    ).first()
+                    
+                    if exam_answer and exam_answer.selected_answer == question.correct_answer:
+                        correct_count += 1
+                        exam_answer.is_correct = True
+                        exam_answer.save(update_fields=['is_correct'])
+                    elif exam_answer:
+                        exam_answer.is_correct = False
+                        exam_answer.save(update_fields=['is_correct'])
+                except Question.DoesNotExist:
+                    logger.warning(f"Question {exam_question.question_id} not found")
+                    continue
+                except Exception as e:
+                    logger.error(f"Error processing question {exam_question.question_id}: {str(e)}")
+                    continue
+            
+            # Calculate score percentage
+            score_percentage = (correct_count / total_questions) * 100 if total_questions > 0 else 0
+            
+            logger.info(f"Score calculated: {correct_count}/{total_questions} = {score_percentage}%")
+            
+            # Update result using raw SQL since model has managed=False
+            from django.db import connection
+            from django.utils import timezone
+            
+            now = timezone.now()
+            
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute("""
+                        UPDATE exam_results 
+                        SET score = %s, status = %s, submitted_at = %s, updated_at = %s
+                        WHERE id = %s
+                    """, [
+                        float(score_percentage),
+                        'completed',
+                        now,  # Set submitted_at khi finish exam
+                        now,
+                        str(result.id)
+                    ])
+                
+                logger.info(f"✅ Updated exam_result {result.id} in database")
+            except Exception as db_error:
+                logger.error(f"Error updating exam_result in database: {str(db_error)}")
+                raise db_error
+            
+            # Get updated result - cannot use refresh_from_db with managed=False
+            # So we'll manually update the object
+            result.score = score_percentage
+            result.status = 'completed'
+            result.submitted_at = now  # Cập nhật submitted_at trong object
+            result.updated_at = now
+            
+            logger.info(f"✅ Exam result {result.id} completed successfully. Score: {score_percentage}%")
+            print(f"[FINISH_EXAM] ✅ Exam result {result.id} completed successfully. Score: {score_percentage}%")
+            
+            # Gọi hàm cập nhật StudentCertificate thủ công vì signal không trigger với raw SQL
+            # (ExamResult có managed=False nên signal post_save không tự động chạy)
+            logger.info(f"🔄 About to call update_student_certificate_from_exam_result for result {result.id}")
+            print(f"[FINISH_EXAM] 🔄 About to call update_student_certificate_from_exam_result for result {result.id}")
+            logger.info(f"📊 Result details: id={result.id}, student_id={result.student_id}, exam_instance_id={result.exam_instance_id}, status={result.status}, score={result.score}, submitted_at={result.submitted_at}")
+            print(f"[FINISH_EXAM] 📊 Result details: id={result.id}, student_id={result.student_id}, exam_instance_id={result.exam_instance_id}, status={result.status}, score={result.score}, submitted_at={result.submitted_at}")
+            try:
+                update_student_certificate_from_exam_result(result)
+                logger.info(f"✅ Successfully updated StudentCertificate for exam result {result.id}")
+                print(f"[FINISH_EXAM] ✅ Successfully updated StudentCertificate for exam result {result.id}")
+            except Exception as cert_error:
+                logger.error(f"❌ ERROR updating StudentCertificate: {str(cert_error)}", exc_info=True)
+                import traceback
+                logger.error(f"❌ Full traceback: {traceback.format_exc()}")
+                print(f"[FINISH_EXAM] ❌ ERROR updating StudentCertificate: {str(cert_error)}")
+                print(f"[FINISH_EXAM] ❌ Full traceback: {traceback.format_exc()}")
+                # Không fail request nếu update certificate lỗi
+            
+            serializer = ExamResultSerializer(result)
+            return Response(serializer.data)
+            
+        except Exception as e:
+            logger.error(f"Error finishing exam: {str(e)}", exc_info=True)
+            return Response({
+                'detail': f'Lỗi khi chấm điểm: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @action(detail=False, methods=['get'], url_path='student/(?P<student_id>[^/.]+)')
     def student_results(self, request, student_id=None):
@@ -1299,76 +2123,162 @@ class ExamResultViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get'], url_path='answers')
     def get_exam_answers(self, request, pk=None):
         """Get all answers for an exam result"""
-        result = self.get_object()
-        
-        # Get all exam answers for this result
-        exam_answers = ExamAnswer.objects.filter(result_id=result.id)
-        
-        answers_data = []
-        for exam_answer in exam_answers:
+        try:
             try:
-                question = Question.objects.get(id=exam_answer.question_id)
-                question_group = None
-                if question.group_id:
-                    try:
-                        question_group = QuestionGroup.objects.get(id=question.group_id)
-                    except QuestionGroup.DoesNotExist:
-                        pass
-                
-                # Get order number from exam instance questions
-                exam_question = ExamInstanceQuestion.objects.filter(
-                    exam_instance_id=result.exam_instance_id,
-                    question_id=question.id
-                ).first()
-                
-                answer_data = {
-                    'id': str(exam_answer.id),
-                    'question_id': str(question.id),
-                    'order_number': exam_question.order_number if exam_question else None,
-                    'part': question.part,
-                    'skill': question.skill,
-                    'question_text': self._clean_text(question.text) if question.text else None,
-                    'option_a': self._clean_text(question.option_a) if question.option_a else None,
-                    'option_b': self._clean_text(question.option_b) if question.option_b else None,
-                    'option_c': self._clean_text(question.option_c) if question.option_c else None,
-                    'option_d': self._clean_text(question.option_d) if question.option_d else None,
-                    'correct_answer': question.correct_answer,
-                    'selected_answer': exam_answer.selected_answer,
-                    'is_correct': exam_answer.is_correct,
-                    'difficulty': question.difficulty,
-                    'audio_file': question.audio_file,
-                    'group_id': str(question.group_id) if question.group_id else None,
-                    'group': None
-                }
-                
-                # Add group info if exists
-                if question_group:
-                    answer_data['group'] = {
-                        'id': str(question_group.id),
-                        'part': question_group.part,
-                        'skill': question_group.skill,
-                        'context': self._clean_text(question_group.context) if question_group.context else None,
-                        'audio_file': question_group.audio_file,
-                        'image_file': question_group.image_file
+                result = self.get_object()
+            except ExamResult.DoesNotExist:
+                logger.error(f"Exam result not found: {pk}")
+                return Response({
+                    'detail': f'Không tìm thấy kết quả bài test với ID: {pk}'
+                }, status=status.HTTP_404_NOT_FOUND)
+            except Exception as e:
+                logger.error(f"Error getting exam result: {str(e)}")
+                return Response({
+                    'detail': f'Lỗi khi lấy thông tin bài test: {str(e)}'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            logger.info(f"Getting answers for exam result: {result.id}")
+            
+            # Get all exam answers for this result
+            exam_answers = ExamAnswer.objects.filter(result_id=result.id)
+            logger.info(f"Found {exam_answers.count()} exam answers")
+            
+            # Also get all questions from exam instance to show unanswered questions
+            exam_questions = ExamInstanceQuestion.objects.filter(
+                exam_instance_id=result.exam_instance_id
+            ).order_by('order_number')
+            
+            answers_data = []
+            answered_question_ids = set()
+            
+            # Process existing answers
+            for exam_answer in exam_answers:
+                try:
+                    question = Question.objects.get(id=exam_answer.question_id)
+                    answered_question_ids.add(str(question.id))
+                    
+                    question_group = None
+                    if question.group_id:
+                        try:
+                            question_group = QuestionGroup.objects.get(id=question.group_id)
+                        except QuestionGroup.DoesNotExist:
+                            pass
+                    
+                    # Get order number from exam instance questions
+                    exam_question = ExamInstanceQuestion.objects.filter(
+                        exam_instance_id=result.exam_instance_id,
+                        question_id=question.id
+                    ).first()
+                    
+                    answer_data = {
+                        'id': str(exam_answer.id),
+                        'question_id': str(question.id),
+                        'order_number': exam_question.order_number if exam_question else None,
+                        'part': question.part,
+                        'skill': question.skill,
+                        'question_text': self._clean_text(question.text) if question.text else None,
+                        'option_a': self._clean_text(question.option_a) if question.option_a else None,
+                        'option_b': self._clean_text(question.option_b) if question.option_b else None,
+                        'option_c': self._clean_text(question.option_c) if question.option_c else None,
+                        'option_d': self._clean_text(question.option_d) if question.option_d else None,
+                        'correct_answer': question.correct_answer,
+                        'selected_answer': exam_answer.selected_answer,
+                        'is_correct': exam_answer.is_correct,
+                        'difficulty': question.difficulty,
+                        'audio_file': question.audio_file,
+                        'group_id': str(question.group_id) if question.group_id else None,
+                        'group': None
                     }
-                
-                answers_data.append(answer_data)
-            except Question.DoesNotExist:
-                logger.warning(f"Question {exam_answer.question_id} not found for answer {exam_answer.id}")
-                continue
-        
-        # Sort by order_number
-        answers_data.sort(key=lambda x: x['order_number'] if x['order_number'] else 9999)
-        
-        return Response({
-            'result_id': str(result.id),
-            'exam_instance_id': str(result.exam_instance_id),
-            'student_id': str(result.student_id),
-            'score': result.score,
-            'status': result.status,
-            'submitted_at': result.submitted_at,
-            'answers': answers_data
-        })
+                    
+                    # Add group info if exists
+                    if question_group:
+                        answer_data['group'] = {
+                            'id': str(question_group.id),
+                            'part': question_group.part,
+                            'skill': question_group.skill,
+                            'context': self._clean_text(question_group.context) if question_group.context else None,
+                            'audio_file': question_group.audio_file,
+                            'image_file': question_group.image_file
+                        }
+                    
+                    answers_data.append(answer_data)
+                except Question.DoesNotExist:
+                    logger.warning(f"Question {exam_answer.question_id} not found for answer {exam_answer.id}")
+                    continue
+                except Exception as e:
+                    logger.error(f"Error processing answer {exam_answer.id}: {str(e)}")
+                    continue
+            
+            # Add unanswered questions
+            for exam_question in exam_questions:
+                if str(exam_question.question_id) not in answered_question_ids:
+                    try:
+                        question = Question.objects.get(id=exam_question.question_id)
+                        question_group = None
+                        if question.group_id:
+                            try:
+                                question_group = QuestionGroup.objects.get(id=question.group_id)
+                            except QuestionGroup.DoesNotExist:
+                                pass
+                        
+                        answer_data = {
+                            'id': None,
+                            'question_id': str(question.id),
+                            'order_number': exam_question.order_number,
+                            'part': question.part,
+                            'skill': question.skill,
+                            'question_text': self._clean_text(question.text) if question.text else None,
+                            'option_a': self._clean_text(question.option_a) if question.option_a else None,
+                            'option_b': self._clean_text(question.option_b) if question.option_b else None,
+                            'option_c': self._clean_text(question.option_c) if question.option_c else None,
+                            'option_d': self._clean_text(question.option_d) if question.option_d else None,
+                            'correct_answer': question.correct_answer,
+                            'selected_answer': None,
+                            'is_correct': None,
+                            'difficulty': question.difficulty,
+                            'audio_file': question.audio_file,
+                            'group_id': str(question.group_id) if question.group_id else None,
+                            'group': None
+                        }
+                        
+                        if question_group:
+                            answer_data['group'] = {
+                                'id': str(question_group.id),
+                                'part': question_group.part,
+                                'skill': question_group.skill,
+                                'context': self._clean_text(question_group.context) if question_group.context else None,
+                                'audio_file': question_group.audio_file,
+                                'image_file': question_group.image_file
+                            }
+                        
+                        answers_data.append(answer_data)
+                    except Question.DoesNotExist:
+                        logger.warning(f"Question {exam_question.question_id} not found")
+                        continue
+                    except Exception as e:
+                        logger.error(f"Error processing unanswered question {exam_question.question_id}: {str(e)}")
+                        continue
+            
+            # Sort by order_number
+            answers_data.sort(key=lambda x: x['order_number'] if x['order_number'] else 9999)
+            
+            logger.info(f"Returning {len(answers_data)} answers")
+            
+            return Response({
+                'result_id': str(result.id),
+                'exam_instance_id': str(result.exam_instance_id),
+                'student_id': str(result.student_id),
+                'score': float(result.score) if result.score is not None else None,
+                'status': result.status,
+                'submitted_at': result.submitted_at.isoformat() if result.submitted_at else None,
+                'answers': answers_data
+            })
+            
+        except Exception as e:
+            logger.error(f"Error getting exam answers: {str(e)}", exc_info=True)
+            return Response({
+                'detail': f'Lỗi khi lấy câu trả lời: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 # Student Progress Views

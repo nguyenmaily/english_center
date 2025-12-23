@@ -110,12 +110,80 @@ class EnrollmentViewSet(PermissionMixin, viewsets.ModelViewSet):
 
     def check_permissions(self, request):
         """
-        Override check_permissions để cho phép giáo viên xem enrollments của lớp học mà họ đang dạy
+        Override check_permissions để cho phép:
+        1. Học viên xem enrollments của chính họ (khi query với student_id hoặc class_id)
+        2. Giáo viên xem enrollments của lớp học mà họ đang dạy
+        3. Manager xem và quản lý enrollments của các lớp trong campus của họ
+        4. Admin xem và quản lý tất cả enrollments
         """
         method = request.method
         
-        # Cho phép giáo viên xem enrollments của lớp học mà họ đang dạy
+        # Kiểm tra nếu đây là action đặc biệt (pending-payments, my-classes, payment-stats)
+        # Các action này sẽ tự xử lý permission trong chính action đó
+        path = request.path
+        if 'pending-payments' in path or 'my-classes' in path or 'payment-stats' in path:
+            # Cho phép action tự xử lý permission, chỉ check authentication
+            super(PermissionMixin, self).check_permissions(request)
+            return
+        
+        # Cho phép admin làm mọi thứ
+        if hasattr(request.user, 'roleid') and request.user.roleid:
+            if request.user.roleid.name == 'admin':
+                return  # Bỏ qua permission check
+        
+        # Cho phép manager quản lý enrollments của các lớp trong campus của họ
+        if hasattr(request.user, 'manager_profile'):
+            manager = request.user.manager_profile
+            if manager.campus:
+                # Kiểm tra enrollment có thuộc lớp trong campus của manager không
+                if method in ['GET', 'PATCH', 'PUT']:
+                    # Với GET: kiểm tra class_id trong query params
+                    if method == 'GET':
+                        class_id = request.query_params.get('class_id')
+                        if class_id:
+                            try:
+                                cls = Class.objects.get(id=class_id)
+                                if cls.campus == manager.campus:
+                                    return  # Cho phép manager xem enrollments của lớp trong campus
+                            except Class.DoesNotExist:
+                                pass
+                    # Với PATCH/PUT: kiểm tra enrollment có class_id thuộc campus của manager không
+                    elif method in ['PATCH', 'PUT']:
+                        # Lấy enrollment từ URL (pk)
+                        pk = self.kwargs.get('pk')
+                        if pk:
+                            try:
+                                enrollment = Enrollment.objects.get(id=pk)
+                                if enrollment.class_id:
+                                    cls = Class.objects.get(id=enrollment.class_id)
+                                    if cls.campus == manager.campus:
+                                        return  # Cho phép manager update enrollments của lớp trong campus
+                            except (Enrollment.DoesNotExist, Class.DoesNotExist):
+                                pass
+        
         if method == 'GET':
+            # Cho phép học viên xem enrollments của chính họ
+            if hasattr(request.user, 'student_profile'):
+                student = request.user.student_profile
+                student_id = request.query_params.get('student_id')
+                
+                # Nếu query với student_id và là chính học viên đó → cho phép
+                if student_id and str(student.id) == str(student_id):
+                    return  # Bỏ qua permission check
+                
+                # Nếu query với class_id, kiểm tra xem học viên có enrollment trong lớp đó không
+                class_id = request.query_params.get('class_id')
+                if class_id:
+                    # Kiểm tra học viên có enrollment trong lớp này không (bao gồm cả đang bảo lưu)
+                    enrollment_exists = Enrollment.objects.filter(
+                        student_id=student.id,
+                        class_id=class_id
+                    ).exists()
+                    
+                    if enrollment_exists:
+                        return  # Cho phép học viên xem enrollment của chính họ trong lớp này
+            
+            # Cho phép giáo viên xem enrollments của lớp học mà họ đang dạy
             from authentication.permissions import is_teacher
             if is_teacher(request.user):
                 # Kiểm tra xem có class_id trong query params không
@@ -256,14 +324,16 @@ class EnrollmentViewSet(PermissionMixin, viewsets.ModelViewSet):
                 }, status=status.HTTP_400_BAD_REQUEST)
             
             # VALIDATION 5: Kiểm tra trùng lịch học
+            # Chỉ kiểm tra enrollments có class_id (không phải đang bảo lưu)
             existing_enrollments = Enrollment.objects.filter(
-                student_id=student_id
+                student_id=student_id,
+                class_id__isnull=False  # Chỉ lấy enrollment có class
             ).exclude(
                 invoice_status='canceled'
             )
             
             # Lấy các lớp học từ enrollments
-            existing_class_ids = [e.class_id for e in existing_enrollments]
+            existing_class_ids = [e.class_id for e in existing_enrollments if e.class_id]
             existing_classes = Class.objects.filter(id__in=existing_class_ids)
             
             # Kiểm tra trùng thời gian
@@ -291,9 +361,12 @@ class EnrollmentViewSet(PermissionMixin, viewsets.ModelViewSet):
             due_date = today + timedelta(days=2)
             
             # Tạo enrollment trước
+            # Lấy course_id từ class để lưu vào enrollment
+            course_id = cls.course_id if cls.course else None
             enrollment = Enrollment.objects.create(
                 student_id=student_id,
                 class_id=class_id,
+                course_id=course_id,  # Thêm course_id khi tạo enrollment
                 amount=amount,
                 invoice_status='pending',
                 due_date=due_date
@@ -377,11 +450,14 @@ class EnrollmentViewSet(PermissionMixin, viewsets.ModelViewSet):
         """Update payment status"""
         enrollment = self.get_object()
         new_status = request.data.get('invoice_status')
-        if new_status in ['pending', 'paid', 'overdue', 'canceled']:
-            enrollment.invoice_status = new_status
-            enrollment.save(update_fields=['invoice_status', 'updated_at'])
-            return Response({'detail': 'Payment status updated'})
-        return Response({'detail': 'Invalid status'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        if new_status not in ['pending', 'paid', 'overdue', 'canceled']:
+            return Response({'detail': 'Invalid status'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Update status (permission đã được check trong check_permissions)
+        enrollment.invoice_status = new_status
+        enrollment.save(update_fields=['invoice_status', 'updated_at'])
+        return Response({'detail': 'Payment status updated'})
 
     @action(detail=False, methods=['get'], url_path='my-classes')
     def my_classes(self, request):
@@ -411,6 +487,82 @@ class EnrollmentViewSet(PermissionMixin, viewsets.ModelViewSet):
                 'sessions': timetable.get(class_id, []),
             })
         return Response(result)
+
+    @action(detail=False, methods=['get'], url_path='pending-payments')
+    def pending_payments(self, request):
+        """
+        Get pending payment enrollments for manager
+        Manager chỉ thấy enrollments có invoice_status='pending' của các lớp thuộc campus của họ
+        """
+        from users.models import Manager
+        
+        user = request.user
+        
+        # Check if user is manager
+        if not hasattr(user, 'roleid') or not user.roleid or user.roleid.name != 'manager':
+            return Response({'detail': 'Only managers can access this endpoint'}, 
+                          status=status.HTTP_403_FORBIDDEN)
+        
+        try:
+            manager = Manager.objects.select_related('campus').get(user_account=user)
+            if not manager.campus:
+                return Response({'detail': 'Manager has no campus assigned'}, 
+                              status=status.HTTP_403_FORBIDDEN)
+            
+            # Lấy tất cả classes thuộc campus của manager
+            campus_classes = Class.objects.filter(campus=manager.campus).values_list('id', flat=True)
+            
+            # Lấy enrollments có invoice_status='pending' và class_id trong campus_classes
+            enrollments = Enrollment.objects.filter(
+                invoice_status='pending',
+                class_id__in=campus_classes
+            ).select_related().order_by('-created_at')
+            
+            # Serialize với thông tin đầy đủ
+            result = []
+            for enrollment in enrollments:
+                try:
+                    from users.models import Student
+                    student = Student.objects.select_related('user_account').get(id=enrollment.student_id)
+                    user_account = student.user_account
+                    
+                    # Lấy thông tin lớp học
+                    class_obj = None
+                    if enrollment.class_id:
+                        try:
+                            class_obj = Class.objects.select_related('course', 'campus', 'teacher').get(id=enrollment.class_id)
+                        except Class.DoesNotExist:
+                            pass
+                    
+                    enrollment_data = {
+                        'id': str(enrollment.id),
+                        'student': {
+                            'id': str(student.id),
+                            'fullname': user_account.fullname,
+                            'username': user_account.username,
+                            'email': user_account.email,
+                        },
+                        'class': {
+                            'id': str(class_obj.id) if class_obj else None,
+                            'name': class_obj.name if class_obj else 'N/A',
+                            'course_name': class_obj.course.name if class_obj and class_obj.course else 'N/A',
+                        } if class_obj else None,
+                        'amount': float(enrollment.amount),
+                        'invoice_status': enrollment.invoice_status,
+                        'due_date': enrollment.due_date.isoformat() if enrollment.due_date else None,
+                        'created_at': enrollment.created_at.isoformat(),
+                        'notes': enrollment.notes,
+                    }
+                    result.append(enrollment_data)
+                except Exception as e:
+                    logger.warning(f"Error processing enrollment {enrollment.id}: {str(e)}")
+                    continue
+            
+            return Response(result)
+            
+        except Manager.DoesNotExist:
+            return Response({'detail': 'Manager profile not found'}, 
+                          status=status.HTTP_404_NOT_FOUND)
 
     @action(detail=False, methods=['get'], url_path='payment-stats')
     def payment_stats(self, request):
