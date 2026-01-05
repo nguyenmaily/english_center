@@ -34,8 +34,8 @@ def update_proficiency_from_final_test(sender, instance, created, **kwargs):
         # Lấy exam instance để kiểm tra exam_type
         exam_instance = ExamInstance.objects.get(id=instance.exam_instance_id)
         
-        # Chỉ xử lý final test, midterm test hoặc placement test
-        if exam_instance.exam_type not in ['final', 'midterm', 'placement']:
+        # Chỉ xử lý final test hoặc placement test (KHÔNG lưu midterm test)
+        if exam_instance.exam_type not in ['final', 'placement']:
             return
         
         # Lấy student
@@ -65,18 +65,17 @@ def update_proficiency_from_final_test(sender, instance, created, **kwargs):
             return
         
         # Xác định source_type
-        # QUAN TRỌNG: Chỉ động vào entry_test, midterm_test và final_test, KHÔNG động vào certificate
+        # QUAN TRỌNG: Chỉ động vào entry_test và final_test, KHÔNG động vào certificate và midterm_test
         # Để tránh xung đột với chức năng upload chứng chỉ (source_type='certificate')
+        # KHÔNG lưu midterm_test vào student_certificates
         if exam_instance.exam_type == 'placement':
             source_type = StudentCertificate.SourceType.ENTRY_TEST
-        elif exam_instance.exam_type == 'midterm':
-            source_type = StudentCertificate.SourceType.MIDTERM_TEST
         else:  # final
             source_type = StudentCertificate.SourceType.FINAL_TEST
         
         # Tìm record mới nhất với cùng source_type và skill_group
-        # CHỈ tìm records có source_type='entry_test', 'midterm_test' hoặc 'final_test'
-        # KHÔNG động vào records có source_type='certificate' (chứng chỉ upload)
+        # CHỈ tìm records có source_type='entry_test' hoặc 'final_test'
+        # KHÔNG động vào records có source_type='certificate' (chứng chỉ upload) hoặc 'midterm_test'
         latest_certificate = StudentCertificate.objects.filter(
             student=student,
             source_type=source_type,  # Filter theo entry_test, midterm_test hoặc final_test
@@ -84,7 +83,7 @@ def update_proficiency_from_final_test(sender, instance, created, **kwargs):
         ).order_by('-test_date', '-created_at').first()
         
         test_date = timezone.now().date()
-        test_type_name = 'placement test' if exam_instance.exam_type == 'placement' else ('midterm test' if exam_instance.exam_type == 'midterm' else 'final test')
+        test_type_name = 'placement test' if exam_instance.exam_type == 'placement' else 'final test'
         
         if latest_certificate:
             # Luôn update record mới nhất với kết quả test mới nhất

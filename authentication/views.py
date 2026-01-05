@@ -291,6 +291,11 @@ English Center Team
             """
             
             try:
+                # Log email configuration (không log password)
+                logger.info(f"📧 Sending OTP email to: {email}")
+                logger.info(f"📧 From email: {settings.DEFAULT_FROM_EMAIL}")
+                logger.info(f"📧 SMTP Host: {settings.EMAIL_HOST}:{settings.EMAIL_PORT}")
+                
                 send_mail(
                     'Password Reset OTP',
                     message,
@@ -299,6 +304,8 @@ English Center Team
                     fail_silently=False,
                 )
                 
+                logger.info(f"✅ OTP email sent successfully to: {email}")
+                
                 return Response({
                     'success': True,
                     'data': {'message': 'OTP sent to your email successfully.'},
@@ -306,10 +313,28 @@ English Center Team
                 }, status=status.HTTP_200_OK)
                 
             except Exception as e:
+                # Log chi tiết lỗi để debug
+                error_message = str(e)
+                logger.error(f"❌ Failed to send OTP email to {email}: {error_message}")
+                logger.error(f"❌ Error type: {type(e).__name__}")
+                logger.error(f"❌ Email config - Host: {settings.EMAIL_HOST}, Port: {settings.EMAIL_PORT}, User: {settings.EMAIL_HOST_USER}")
+                
+                # Trả về thông báo lỗi chi tiết hơn
+                error_detail = 'Failed to send email.'
+                if 'authentication failed' in error_message.lower() or '535' in error_message:
+                    error_detail = 'Email authentication failed. Please check EMAIL_HOST_USER and EMAIL_HOST_PASSWORD in settings.py. For Gmail, you need to use App Password, not regular password.'
+                elif 'connection' in error_message.lower():
+                    error_detail = 'Cannot connect to email server. Please check EMAIL_HOST and EMAIL_PORT in settings.py.'
+                elif 'timeout' in error_message.lower():
+                    error_detail = 'Email server connection timeout. Please check your internet connection and email server settings.'
+                
                 return Response({
                     'success': False,
                     'data': None,
-                    'error': {'message': 'Failed to send email.'}
+                    'error': {
+                        'message': error_detail,
+                        'detail': error_message if settings.DEBUG else None
+                    }
                 }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         
         return Response({

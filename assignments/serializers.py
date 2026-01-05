@@ -47,6 +47,8 @@ class AssignmentSerializer(serializers.ModelSerializer):
     Serializer cho Assignment
     """
     session_name = serializers.CharField(source='session.name', read_only=True)
+    class_name = serializers.SerializerMethodField()
+    class_id = serializers.SerializerMethodField()
     answer_keys_count = serializers.SerializerMethodField()
     submissions_count = serializers.SerializerMethodField()
     url_file = serializers.SerializerMethodField()
@@ -55,11 +57,23 @@ class AssignmentSerializer(serializers.ModelSerializer):
         model = Assignment
         fields = [
             'id', 'title', 'description', 'due_date', 'status',
-            'url_file', 'session', 'session_name',
+            'url_file', 'session', 'session_name', 'class_name', 'class_id',
             'answer_keys_count', 'submissions_count',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
+    
+    def get_class_name(self, obj):
+        """Get class name from session -> class_session"""
+        if obj.session and hasattr(obj.session, 'class_session') and obj.session.class_session:
+            return obj.session.class_session.name
+        return None
+    
+    def get_class_id(self, obj):
+        """Get class ID from session -> class_session"""
+        if obj.session and hasattr(obj.session, 'class_session') and obj.session.class_session:
+            return str(obj.session.class_session.id) if hasattr(obj.session.class_session, 'id') else None
+        return None
     
     def get_url_file(self, obj):
         """Convert relative URL to absolute URL"""
@@ -85,6 +99,8 @@ class AssignmentDetailSerializer(serializers.ModelSerializer):
     """
     answer_keys = AnswerKeySerializer(many=True, read_only=True)
     session_name = serializers.CharField(source='session.name', read_only=True)
+    class_name = serializers.SerializerMethodField()
+    class_id = serializers.SerializerMethodField()
     answer_keys_count = serializers.SerializerMethodField()
     submissions_count = serializers.SerializerMethodField()
     graded_submissions_count = serializers.SerializerMethodField()
@@ -94,12 +110,24 @@ class AssignmentDetailSerializer(serializers.ModelSerializer):
         model = Assignment
         fields = [
             'id', 'title', 'description', 'due_date', 'status',
-            'url_file', 'session', 'session_name',
+            'url_file', 'session', 'session_name', 'class_name', 'class_id',
             'answer_keys', 'answer_keys_count',
             'submissions_count', 'graded_submissions_count',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
+    
+    def get_class_name(self, obj):
+        """Get class name from session -> class_session"""
+        if obj.session and hasattr(obj.session, 'class_session') and obj.session.class_session:
+            return obj.session.class_session.name
+        return None
+    
+    def get_class_id(self, obj):
+        """Get class ID from session -> class_session"""
+        if obj.session and hasattr(obj.session, 'class_session') and obj.session.class_session:
+            return str(obj.session.class_session.id) if hasattr(obj.session.class_session, 'id') else None
+        return None
     
     def get_url_file(self, obj):
         """Convert relative URL to absolute URL"""

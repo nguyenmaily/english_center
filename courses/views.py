@@ -286,6 +286,31 @@ class CourseClassesListView(PermissionMixin, generics.ListAPIView):
 
 # ==================== SKILL VIEWS ====================
 
+class SkillListView(PermissionMixin, generics.ListAPIView):
+    """
+    GET /api/skills/ - Lấy danh sách tất cả skills
+    """
+    queryset = Skill.objects.all()
+    serializer_class = SkillSerializer
+    permission_classes = [IsAuthenticated]
+    permission_map = {
+        'GET': 'view_courses',
+    }
+    filter_backends = [filters.OrderingFilter]
+    ordering_fields = ['name']
+    ordering = ['name']
+    
+    def list(self, request, *args, **kwargs):
+        """Override để trả về format response nhất quán"""
+        queryset = self.filter_queryset(self.get_queryset())
+        serializer = self.get_serializer(queryset, many=True)
+        return Response({
+            'success': True,
+            'data': serializer.data,
+            'error': None
+        })
+
+
 class SkillDetailView(PermissionMixin, generics.RetrieveUpdateDestroyAPIView):
     """
     GET /api/skills/{id}/ - Xem chi tiết skill

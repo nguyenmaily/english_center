@@ -106,19 +106,61 @@ class CampusDetailView(PermissionMixin, generics.RetrieveUpdateDestroyAPIView):
 class CampusRoomsView(PermissionMixin, generics.ListAPIView):
     """
     GET /api/campus/campuses/{id}/rooms/ - Lấy danh sách phòng của campus
+    
+    Permission: 
+    - view_campus (admin, manager, student)
+    - view_classes (teacher - cần để xem phòng học khi thêm buổi học)
     """
     serializer_class = RoomSerializer
     permission_classes = [IsAuthenticated]
     permission_map = {
-        'GET': 'view_campus',
+        'GET': 'view_campus',  # Default permission
     }
+    
+    def check_permissions(self, request):
+        """
+        Override để cho phép teacher với view_classes permission cũng có thể truy cập
+        """
+        from authentication.permissions import check_user_permission
+        
+        # Check default permission (view_campus)
+        if check_user_permission(request.user, 'view_campus'):
+            return
+        
+        # Nếu không có view_campus, check xem có view_classes không (cho teacher)
+        if check_user_permission(request.user, 'view_classes'):
+            return
+        
+        # Nếu không có cả 2, raise PermissionDenied
+        from rest_framework.exceptions import PermissionDenied
+        raise PermissionDenied(
+            detail={
+                'error': 'Permission denied',
+                'message': 'Bạn không có quyền xem danh sách phòng học',
+                'detail': 'Cần quyền: view_campus hoặc view_classes',
+                'required_permission': 'view_campus hoặc view_classes'
+            }
+        )
     
     def get_queryset(self):
         if getattr(self, 'swagger_fake_view', False):
             return Room.objects.none()
         
         campus_id = self.kwargs['pk']
-        return Room.objects.filter(campus_id=campus_id).select_related('campus')
+        
+        # Validate campus exists
+        campus = get_object_or_404(Campus, id=campus_id)
+        
+        # Filter rooms by campus_id - chỉ trả về phòng học của campus này
+        queryset = Room.objects.filter(campus_id=campus_id).select_related('campus')
+        
+        # Log để debug
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"📋 Loading rooms for campus: {campus.name} (ID: {campus_id})")
+        logger.info(f"📋 Found {queryset.count()} rooms for this campus")
+        
+        return queryset
 
 
 # ==================== ROOM VIEWS ====================

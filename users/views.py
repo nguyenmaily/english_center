@@ -9,6 +9,7 @@ from django.db.models import Q, Sum, Count
 from datetime import datetime, timedelta
 
 from authentication.permissions import PermissionMixin
+from core.pagination import CustomPagination
 from .models import Teacher, Manager, Student
 from classes.models import Class
 from courses.models import Course
@@ -107,8 +108,6 @@ class RoleFieldsSchemaView(generics.GenericAPIView):
                         'required': False,
                         'label': 'Cấp độ',
                         'choices': [
-                            {'value': 'junior', 'label': 'Junior'},
-                            {'value': 'senior', 'label': 'Senior'},
                             {'value': 'expert', 'label': 'Expert'},
                             {'value': 'master', 'label': 'Master'}
                         ],
@@ -481,6 +480,8 @@ class UserDetailView(PermissionMixin, generics.RetrieveUpdateDestroyAPIView):
         })
     
     def destroy(self, request, *args, **kwargs):
+        from django.db import transaction, connection
+        
         instance = self.get_object()
         
         if instance.id == request.user.id:
@@ -489,11 +490,98 @@ class UserDetailView(PermissionMixin, generics.RetrieveUpdateDestroyAPIView):
                 'error': 'You cannot delete your own account'
             }, status=status.HTTP_400_BAD_REQUEST)
         
-        self.perform_destroy(instance)
-        return Response({
-            'success': True,
-            'message': 'User deleted successfully'
-        }, status=status.HTTP_204_NO_CONTENT)
+        # Sử dụng transaction để đảm bảo atomicity
+        try:
+            with transaction.atomic():
+                # Xóa tất cả dữ liệu liên quan bằng raw SQL để tránh foreign key constraint issues
+                # Vì nhiều model có managed = False
+                with connection.cursor() as cursor:
+                    # Kiểm tra nếu user là student, xóa enrollments và các dữ liệu liên quan trước
+                    if hasattr(instance, 'student_profile'):
+                        student = instance.student_profile
+                        student_id = student.id
+                        
+                        # 1. Xóa student_answers (tham chiếu đến submissions)
+                        cursor.execute(
+                            "DELETE FROM student_answers WHERE submission_id IN (SELECT id FROM submissions WHERE student_id = %s)",
+                            [str(student_id)]
+                        )
+                        
+                        # 2. Xóa submissions
+                        cursor.execute(
+                            "DELETE FROM submissions WHERE student_id = %s",
+                            [str(student_id)]
+                        )
+                        
+                        # 3. Xóa attendances
+                        cursor.execute(
+                            "DELETE FROM attendances WHERE student_id = %s",
+                            [str(student_id)]
+                        )
+                        
+                        # 4. Xóa enrollments
+                        cursor.execute(
+                            "DELETE FROM enrollments WHERE student_id = %s",
+                            [str(student_id)]
+                        )
+                        
+                        # 5. Xóa student_certificates
+                        cursor.execute(
+                            "DELETE FROM student_certificates WHERE student_id = %s",
+                            [str(student_id)]
+                        )
+                        
+                        # 6. Xóa student_profile bằng raw SQL (vì model có managed = False)
+                        cursor.execute(
+                            "DELETE FROM students WHERE id = %s",
+                            [str(student_id)]
+                        )
+                    
+                    # 7. Xóa user bằng raw SQL (vì UserAccount model có managed = False)
+                    # Cần xóa user sau khi đã xóa tất cả dữ liệu liên quan
+                    cursor.execute(
+                        "DELETE FROM user_accounts WHERE id = %s",
+                        [str(instance.id)]
+                    )
+            
+            return Response({
+                'success': True,
+                'message': 'User deleted successfully'
+            }, status=status.HTTP_204_NO_CONTENT)
+            
+        except Exception as e:
+            # Log lỗi chi tiết để debug
+            import logging
+            import traceback
+            logger = logging.getLogger(__name__)
+            error_trace = traceback.format_exc()
+            logger.error(f'Error deleting user {instance.id}: {str(e)}\n{error_trace}')
+            
+            # Trả về thông báo lỗi chi tiết hơn
+            error_message = str(e)
+            error_detail = None
+            
+            # Kiểm tra loại lỗi
+            if 'foreign key' in error_message.lower() or 'constraint' in error_message.lower():
+                error_message = 'Không thể xóa người dùng vì còn dữ liệu liên quan. Vui lòng xóa các đăng ký lớp học và dữ liệu liên quan trước.'
+                error_detail = str(e)
+            elif 'violates' in error_message.lower():
+                error_message = 'Không thể xóa người dùng do ràng buộc dữ liệu. Vui lòng kiểm tra các mối quan hệ dữ liệu.'
+                error_detail = str(e)
+            elif 'does not exist' in error_message.lower():
+                error_message = 'Người dùng không tồn tại hoặc đã bị xóa.'
+            else:
+                error_detail = str(e)
+            
+            # Kiểm tra xem user có phải là staff/admin không để hiển thị chi tiết
+            is_staff = hasattr(request.user, 'is_staff') and request.user.is_staff
+            is_admin = hasattr(request.user, 'roleid') and request.user.roleid and request.user.roleid.name == 'admin'
+            
+            return Response({
+                'success': False,
+                'error': error_message,
+                'detail': error_detail if (is_staff or is_admin) else None
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 # ==================== QUẢN LÝ GIẢNG VIÊN ====================
@@ -509,6 +597,7 @@ class TeacherListView(PermissionMixin, generics.ListAPIView):
     permission_classes = [IsAuthenticated]
     permission_map = {'GET': 'view_teachers'}
     serializer_class = TeacherSerializer
+    pagination_class = CustomPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['campus', 'level']
     search_fields = ['user_account__fullname', 'user_account__username', 'specialization']
@@ -580,6 +669,7 @@ class StudentListView(PermissionMixin, generics.ListAPIView):
     permission_classes = [IsAuthenticated]
     permission_map = {'GET': 'view_students'}
     serializer_class = StudentSerializer
+    pagination_class = CustomPagination
     queryset = Student.objects.select_related('user_account').all()
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['commitment_status']

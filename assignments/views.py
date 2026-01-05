@@ -146,6 +146,19 @@ class StudentAssignmentStartView(PermissionMixin, APIView):
             student=student
         ).first()
         
+        # Nếu có submission và status là 'resubmit_required', cho phép làm lại
+        # Trả về assignment data để học sinh có thể làm lại
+        if existing_submission and existing_submission.status == Submission.Status.RESUBMIT_REQUIRED:
+            # Cho phép làm lại - trả về assignment data
+            serializer = AssignmentDetailSerializer(assignment, context={'request': request})
+            return Response({
+                'success': True,
+                'data': serializer.data,
+                'message': 'You can resubmit this assignment',
+                'submission_status': existing_submission.status
+            })
+        
+        # Nếu đã nộp và không phải resubmit_required, trả về thông báo
         if existing_submission:
             return Response({
                 'success': True,
@@ -157,6 +170,7 @@ class StudentAssignmentStartView(PermissionMixin, APIView):
                 }
             }, status=status.HTTP_200_OK)
         
+        # Chưa nộp - trả về assignment data bình thường
         serializer = AssignmentDetailSerializer(assignment, context={'request': request})
         return Response({
             'success': True,
@@ -209,19 +223,25 @@ class StudentAssignmentSubmitView(APIView):
         )
         
         # Kiểm tra xem đã nộp bài chưa (trừ trường hợp resubmit)
-        # Sử dụng filter với các giá trị hợp lệ thay vì exclude để tránh lỗi enum
-        # Chỉ lấy submissions có status là 'submitted' hoặc 'graded'
+        # Nếu có submission với status 'resubmit_required', cho phép nộp lại (update submission cũ)
+        # Nếu có submission với status 'submitted' hoặc 'graded', không cho phép nộp lại
         existing_submission = Submission.objects.filter(
             assignment=assignment,
-            student=student,
-            status__in=['submitted', 'graded']
+            student=student
         ).first()
         
+        is_resubmit = False
         if existing_submission:
-            return Response({
-                'success': False,
-                'error': 'Bạn đã nộp bài tập này rồi'
-            }, status=status.HTTP_400_BAD_REQUEST)
+            if existing_submission.status == Submission.Status.RESUBMIT_REQUIRED:
+                # Cho phép nộp lại - sẽ update submission cũ
+                is_resubmit = True
+                logger.info(f"🔄 Resubmitting assignment {assignment.id} for student {student.id}")
+            elif existing_submission.status in [Submission.Status.SUBMITTED, Submission.Status.GRADED]:
+                # Đã nộp rồi, không cho phép nộp lại
+                return Response({
+                    'success': False,
+                    'error': 'Bạn đã nộp bài tập này rồi'
+                }, status=status.HTTP_400_BAD_REQUEST)
         
         # Handle file upload (Word, MP3, etc.)
         # Don't copy request.data directly as it contains file objects that can't be pickled
@@ -292,20 +312,58 @@ class StudentAssignmentSubmitView(APIView):
             }, status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            # Save submission
-            submission = serializer.save(
-                assignment=assignment,
-                student=student,
-                status=Submission.Status.SUBMITTED
-            )
+            from .models import StudentAnswer
+            from django.utils import timezone
             
-            logger.info(f"✅ Submission created: {submission.id}")
+            if is_resubmit and existing_submission:
+                # Update existing submission (resubmit)
+                logger.info(f"🔄 Updating existing submission {existing_submission.id} for resubmit")
+                
+                # Update submission fields
+                existing_submission.content = serializer.validated_data.get('content', existing_submission.content)
+                existing_submission.status = Submission.Status.SUBMITTED
+                existing_submission.submitted_at = timezone.now()
+                
+                # Update using raw SQL (model has managed=False)
+                from django.db import connection
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        UPDATE submissions 
+                        SET content = %s,
+                            status = %s,
+                            submitted_at = %s,
+                            updated_at = NOW()
+                        WHERE id = %s
+                        """,
+                        [
+                            existing_submission.content,
+                            'submitted',
+                            existing_submission.submitted_at,
+                            str(existing_submission.id)
+                        ]
+                    )
+                
+                submission = existing_submission
+                logger.info(f"✅ Submission updated: {submission.id}")
+                
+                # Delete old student answers
+                StudentAnswer.objects.filter(submission=submission).delete()
+                logger.info(f"🗑️ Deleted old student answers for submission {submission.id}")
+            else:
+                # Create new submission
+                submission = serializer.save(
+                    assignment=assignment,
+                    student=student,
+                    status=Submission.Status.SUBMITTED
+                )
+                logger.info(f"✅ Submission created: {submission.id}")
+            
             logger.info(f"📝 Has file upload: {has_file_upload}")
             logger.info(f"📝 Has student answers: {len(student_answers_data) > 0}")
             
             # Create student answers if provided
             if student_answers_data:
-                from .models import StudentAnswer
                 for answer_data in student_answers_data:
                     try:
                         StudentAnswer.objects.create(
@@ -765,13 +823,13 @@ class TeacherAssignmentListCreateView(PermissionMixin, generics.ListCreateAPIVie
     
     def get_queryset(self):
         # Check if user has teacher profile
-        if not hasattr(self.request.user, 'teacher'):
+        if not hasattr(self.request.user, 'teacher_profile'):
             return Assignment.objects.none()
         
         # Lấy teacher profile của user đang đăng nhập
         # teacher.id = UUID của teacher trong bảng teachers
         # Ví dụ: teacher.id = "123e4567-e89b-12d3-a456-426614174000"
-        teacher = self.request.user.teacher
+        teacher = self.request.user.teacher_profile
         
         # Get session_id from query params if provided
         session_id = self.request.query_params.get('session')
@@ -869,13 +927,18 @@ class TeacherAssignmentListCreateView(PermissionMixin, generics.ListCreateAPIVie
             
             # IMPORTANT: Assignment model has managed=False, so Django ORM may not work correctly
             # Try Django ORM first, but we'll handle empty results in list() method with raw SQL
-            assignments = Assignment.objects.filter(session_id=session_uuid)
+            # Use select_related to optimize queries
+            assignments = Assignment.objects.select_related(
+                'session', 'session__class_session'
+            ).filter(session_id=session_uuid)
             count_uuid = assignments.count()
             logger.info(f"🔍 Django ORM filter by UUID: {count_uuid} assignments")
             
             # Also try string filter as fallback
             if count_uuid == 0:
-                assignments_str = Assignment.objects.filter(session_id=str(session_id))
+                assignments_str = Assignment.objects.select_related(
+                    'session', 'session__class_session'
+                ).filter(session_id=str(session_id))
                 count_str = assignments_str.count()
                 logger.info(f"🔍 Filter by string: {count_str} assignments")
                 if count_str > 0:
@@ -884,7 +947,9 @@ class TeacherAssignmentListCreateView(PermissionMixin, generics.ListCreateAPIVie
             
             # If still 0, try session object filter
             if count_uuid == 0 and session:
-                assignments_session_obj = Assignment.objects.filter(session=session)
+                assignments_session_obj = Assignment.objects.select_related(
+                    'session', 'session__class_session'
+                ).filter(session=session)
                 count_session_obj = assignments_session_obj.count()
                 logger.info(f"🔍 Filter by session object: {count_session_obj} assignments")
                 if count_session_obj > 0:
@@ -896,6 +961,27 @@ class TeacherAssignmentListCreateView(PermissionMixin, generics.ListCreateAPIVie
             
             assignments_count = assignments.count()
             logger.info(f"✅ Final assignments count: {assignments_count} for session {session_id}")
+            
+            # Tự động cập nhật trạng thái "closed" cho bài tập quá hạn
+            from datetime import date
+            today = date.today()
+            from django.db import connection
+            
+            # Cập nhật các bài tập có due_date đã qua và status chưa phải "closed"
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE assignments 
+                    SET status = 'closed', updated_at = NOW()
+                    WHERE due_date IS NOT NULL 
+                    AND due_date < %s 
+                    AND status != 'closed'
+                    """,
+                    [today]
+                )
+                updated_count = cursor.rowcount
+                if updated_count > 0:
+                    logger.info(f"✅ Auto-updated {updated_count} assignments to 'closed' status (past due date)")
             
             # Debug: Log all assignments
             if assignments_count > 0:
@@ -924,11 +1010,35 @@ class TeacherAssignmentListCreateView(PermissionMixin, generics.ListCreateAPIVie
             # No session filter, return all assignments for sessions that belong to this teacher
             # Filter through session -> teacher or session -> class_session -> teacher
             logger.info(f"🔍 No session filter, returning all assignments for teacher {teacher.id}")
-            queryset = Assignment.objects.filter(
+            queryset = Assignment.objects.select_related(
+                'session', 'session__class_session'
+            ).filter(
                 Q(session__teacher=teacher) | 
                 Q(session__class_session__teacher=teacher)
-        ).distinct()
+            ).distinct()
             logger.info(f"✅ Found {queryset.count()} total assignments for teacher")
+            
+            # Tự động cập nhật trạng thái "closed" cho bài tập quá hạn
+            from django.db import connection
+            from datetime import date
+            today = date.today()
+            
+            # Cập nhật các bài tập có due_date đã qua và status chưa phải "closed"
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE assignments 
+                    SET status = 'closed', updated_at = NOW()
+                    WHERE due_date IS NOT NULL 
+                    AND due_date < %s 
+                    AND status != 'closed'
+                    """,
+                    [today]
+                )
+                updated_count = cursor.rowcount
+                if updated_count > 0:
+                    logger.info(f"✅ Auto-updated {updated_count} assignments to 'closed' status (past due date)")
+            
             return queryset
     
     def get_serializer_class(self):
@@ -947,7 +1057,11 @@ class TeacherAssignmentListCreateView(PermissionMixin, generics.ListCreateAPIVie
         logger.info(f"📤 Files: {list(request.FILES.keys())}")
         
         # Handle file upload
-        data = request.data.copy()
+        # Create a mutable copy of data (QueryDict from FormData needs to be converted)
+        if hasattr(request.data, '_mutable'):
+            data = request.data.copy()
+        else:
+            data = dict(request.data) if hasattr(request.data, 'items') else request.data.copy()
         file_url = None
         
         if 'file' in request.FILES:
@@ -975,6 +1089,14 @@ class TeacherAssignmentListCreateView(PermissionMixin, generics.ListCreateAPIVie
             data['url_file'] = file_url
             logger.info(f"✅ File uploaded: {file_url}")
         
+        # Handle empty strings - convert to None for optional fields
+        if 'due_date' in data and data['due_date'] == '':
+            data['due_date'] = None
+        if 'description' in data and data['description'] == '':
+            data['description'] = None
+        if 'url_file' in data and data['url_file'] == '':
+            data['url_file'] = None
+        
         # Handle answer_keys from JSON if provided
         answer_keys_data = []
         if 'answer_keys' in data:
@@ -986,6 +1108,8 @@ class TeacherAssignmentListCreateView(PermissionMixin, generics.ListCreateAPIVie
                     answer_keys_data = []
             elif isinstance(data['answer_keys'], list):
                 answer_keys_data = data['answer_keys']
+            # Remove answer_keys from data as it's handled separately
+            data.pop('answer_keys', None)
         
         serializer = self.get_serializer(data=data)
         serializer.is_valid(raise_exception=True)
@@ -1081,8 +1205,12 @@ class TeacherAssignmentDetailView(PermissionMixin, generics.RetrieveUpdateDestro
         # Assignment model has managed=False, so Django ORM may not work correctly
         # Try Django ORM first, but handle errors gracefully
         try:
-            return Assignment.objects.filter(
-                session__class_session__teacher=teacher
+            # Filter by both session__teacher and session__class_session__teacher
+            return Assignment.objects.select_related(
+                'session', 'session__class_session'
+            ).filter(
+                Q(session__teacher=teacher) | 
+                Q(session__class_session__teacher=teacher)
             ).distinct()
         except Exception as e:
             import logging
@@ -1185,18 +1313,34 @@ class TeacherAssignmentDetailView(PermissionMixin, generics.RetrieveUpdateDestro
                 
                 if session_teacher_id == teacher_id_str or class_teacher_id == teacher_id_str:
                     logger.info(f"✅ Teacher {teacher_id_str} has access to assignment {pk} (raw SQL)")
-                    # Create Assignment object from raw SQL result
-                    assignment = Assignment()
-                    assignment.id = row[0]
-                    assignment.title = row[1]
-                    assignment.description = row[2]
-                    assignment.due_date = row[3]
-                    assignment.status = row[4]
-                    assignment.url_file = row[5]
-                    assignment.session_id = row[6]
-                    assignment.created_at = row[7]
-                    assignment.updated_at = row[8]
-                    return assignment
+                    # Try to get assignment using Django ORM with select_related to load session
+                    try:
+                        assignment = Assignment.objects.select_related(
+                            'session', 'session__class_session'
+                        ).get(pk=pk)
+                        logger.info(f"✅ Loaded assignment {pk} with session relationship using Django ORM")
+                        return assignment
+                    except Assignment.DoesNotExist:
+                        logger.warning(f"⚠️ Django ORM get failed, creating Assignment object from raw SQL")
+                        # Create Assignment object from raw SQL result as fallback
+                        assignment = Assignment()
+                        assignment.id = row[0]
+                        assignment.title = row[1]
+                        assignment.description = row[2]
+                        assignment.due_date = row[3]
+                        assignment.status = row[4]
+                        assignment.url_file = row[5]
+                        assignment.session_id = row[6]
+                        assignment.created_at = row[7]
+                        assignment.updated_at = row[8]
+                        # Try to load session manually
+                        try:
+                            from class_sessions.models import Session
+                            assignment.session = Session.objects.select_related('class_session').get(id=row[6])
+                            logger.info(f"✅ Manually loaded session for assignment {pk}")
+                        except Exception as e:
+                            logger.warning(f"⚠️ Could not load session for assignment {pk}: {str(e)}")
+                        return assignment
                 else:
                     logger.warning(f"⚠️ Teacher {teacher_id_str} does not have access to assignment {pk} (raw SQL)")
                     raise NotFound("Assignment not found")
@@ -1705,11 +1849,21 @@ class TeacherSubmissionRequestResubmitView(APIView):
     permission_classes = [IsAuthenticated]
     
     def patch(self, request, pk):
+        import logging
+        logger = logging.getLogger(__name__)
+        
         if not hasattr(request.user, 'teacher_profile'):
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("Only teachers can access this endpoint")
         
-        teacher = request.user.teacher_profile
+        try:
+            teacher = request.user.teacher_profile
+        except AttributeError:
+            logger.error("User does not have teacher_profile")
+            return Response({
+                'error': 'User is not a teacher'
+            }, status=status.HTTP_403_FORBIDDEN)
+        
         submission = get_object_or_404(
             Submission,
             pk=pk,
@@ -1718,48 +1872,103 @@ class TeacherSubmissionRequestResubmitView(APIView):
         
         content = request.data.get('content', 'Please resubmit your assignment.')
         
-        # Update status using raw SQL to avoid enum validation error
-        # Check if enum has 'resubmit_required' value first
+        # Update using raw SQL (model has managed=False, so ORM save() won't work)
         from django.db import connection
         try:
             with connection.cursor() as cursor:
-                # Try to update with enum value
+                # First, try to update without enum cast (PostgreSQL will validate automatically)
                 cursor.execute(
                     """
                     UPDATE submissions 
-                    SET status = 'resubmit_required'::submission_status_enum,
+                    SET status = %s,
                         content = %s,
                         updated_at = NOW()
                     WHERE id = %s
                     """,
-                    [content, str(submission.id)]
+                    ['resubmit_required', content, str(submission.id)]
                 )
                 if cursor.rowcount == 0:
+                    from rest_framework.exceptions import NotFound
                     raise NotFound("Submission not found")
+                logger.info(f"✅ Successfully updated submission {submission.id} to resubmit_required")
         except Exception as e:
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.error(f"Error updating submission status: {str(e)}")
-            # Fallback: try without enum cast
-            try:
-                with connection.cursor() as cursor:
-                    cursor.execute(
-                        """
-                        UPDATE submissions 
-                        SET status = 'resubmit_required',
-                            content = %s,
-                            updated_at = NOW()
-                        WHERE id = %s
-                        """,
-                        [content, str(submission.id)]
-                    )
-            except Exception as e2:
-                logger.error(f"Fallback update also failed: {str(e2)}")
+            error_msg = str(e)
+            logger.error(f"❌ Error updating submission status: {error_msg}")
+            import traceback
+            logger.error(traceback.format_exc())
+            
+            # Check if error is about enum value
+            if 'invalid input value for enum' in error_msg.lower() or 'resubmit_required' in error_msg.lower():
+                # Try to add enum value first, then update
+                try:
+                    with connection.cursor() as cursor:
+                        # Try to add enum value if it doesn't exist
+                        cursor.execute("""
+                            DO $$ 
+                            BEGIN
+                                IF NOT EXISTS (
+                                    SELECT 1 FROM pg_enum 
+                                    WHERE enumlabel = 'resubmit_required' 
+                                    AND enumtypid = (
+                                        SELECT oid FROM pg_type WHERE typname = 'submission_status_enum'
+                                    )
+                                ) THEN
+                                    ALTER TYPE submission_status_enum ADD VALUE 'resubmit_required';
+                                END IF;
+                            END $$;
+                        """)
+                        logger.info("✅ Added 'resubmit_required' to enum if it didn't exist")
+                        
+                        # Now try update again
+                        cursor.execute(
+                            """
+                            UPDATE submissions 
+                            SET status = %s,
+                                content = %s,
+                                updated_at = NOW()
+                            WHERE id = %s
+                            """,
+                            ['resubmit_required', content, str(submission.id)]
+                        )
+                        if cursor.rowcount == 0:
+                            from rest_framework.exceptions import NotFound
+                            raise NotFound("Submission not found")
+                        logger.info(f"✅ Successfully updated submission {submission.id} after adding enum value")
+                except Exception as e2:
+                    logger.error(f"❌ Failed to add enum value and update: {str(e2)}")
+                    return Response({
+                        'error': f'Cannot update submission status. Database enum may not support "resubmit_required" value.',
+                        'detail': f'Original error: {error_msg}. Enum update error: {str(e2)}',
+                        'suggestion': 'Please run SQL: ALTER TYPE submission_status_enum ADD VALUE IF NOT EXISTS \'resubmit_required\';'
+                    }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            else:
                 return Response({
-                    'error': 'Cannot update submission status. Database enum may not support this value.'
+                    'error': f'Cannot update submission status: {error_msg}',
+                    'detail': 'Please check database configuration and logs'
                 }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         
         # Refresh submission from database
-        submission.refresh_from_db()
+        try:
+            submission.refresh_from_db()
+        except Exception as e:
+            logger.warning(f"⚠️ Could not refresh from DB: {str(e)}, fetching fresh instance")
+            # Fallback: fetch fresh instance
+            submission = Submission.objects.get(pk=submission.id)
         
-        return Response(SubmissionSerializer(submission).data)
+        # Serialize and return
+        try:
+            serializer = SubmissionSerializer(submission, context={'request': request})
+            return Response({
+                'success': True,
+                'data': serializer.data
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"❌ Error serializing submission: {str(e)}")
+            # Return basic success response even if serialization fails
+            return Response({
+                'success': True,
+                'message': 'Submission status updated successfully',
+                'submission_id': str(submission.id),
+                'status': 'resubmit_required',
+                'warning': f'Could not serialize full response: {str(e)}'
+            }, status=status.HTTP_200_OK)

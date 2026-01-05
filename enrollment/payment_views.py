@@ -5,8 +5,10 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import AllowAny
-from django.shortcuts import get_object_or_404
+from django.shortcuts import get_object_or_404, redirect
 from django.utils import timezone
+from django.conf import settings
+from urllib.parse import urlencode
 from .models import Enrollment
 from .payment_gateway import VNPayGateway
 import logging
@@ -51,20 +53,28 @@ class VNPayReturnView(APIView):
         
         if not is_valid:
             logger.error(f"Invalid VNPay hash in return URL")
-            return Response({
-                'success': False,
+            # Redirect đến trang Frontend với lỗi
+            frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5500')
+            params = {
+                'success': 'false',
                 'error': 'Invalid payment signature'
-            }, status=status.HTTP_400_BAD_REQUEST)
+            }
+            redirect_url = f"{frontend_url}/payment_result.html?{urlencode(params)}"
+            return redirect(redirect_url)
         
         # Lấy enrollment_id từ vnp_TxnRef
         # vnp_TxnRef đã bị loại bỏ dấu gạch ngang khi tạo payment URL
         # Cần thêm lại dấu gạch ngang để tạo UUID hợp lệ
         txn_ref = vnp_params.get('vnp_TxnRef', '')
         if not txn_ref:
-            return Response({
-                'success': False,
+            # Redirect đến trang Frontend với lỗi
+            frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5500')
+            params = {
+                'success': 'false',
                 'error': 'Missing order ID'
-            }, status=status.HTTP_400_BAD_REQUEST)
+            }
+            redirect_url = f"{frontend_url}/payment_result.html?{urlencode(params)}"
+            return redirect(redirect_url)
         
         # Thêm lại dấu gạch ngang vào UUID (format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
         # UUID có độ dài 32 ký tự (không có dấu gạch ngang)
@@ -80,10 +90,14 @@ class VNPayReturnView(APIView):
             enrollment = Enrollment.objects.get(id=enrollment_id)
         except Enrollment.DoesNotExist:
             logger.error(f"Enrollment not found for ID: {enrollment_id} (from TxnRef: {txn_ref})")
-            return Response({
-                'success': False,
+            # Redirect đến trang Frontend với lỗi
+            frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5500')
+            params = {
+                'success': 'false',
                 'error': f'Enrollment not found (ID: {enrollment_id})'
-            }, status=status.HTTP_404_NOT_FOUND)
+            }
+            redirect_url = f"{frontend_url}/payment_result.html?{urlencode(params)}"
+            return redirect(redirect_url)
         
         # Kiểm tra response code
         # 00 = thành công
@@ -94,25 +108,30 @@ class VNPayReturnView(APIView):
             
             logger.info(f"Payment successful for enrollment {enrollment_id}, transaction {transaction_id}")
             
-            return Response({
-                'success': True,
-                'message': 'Thanh toán thành công',
-                'data': {
-                    'enrollment_id': str(enrollment.id),
-                    'invoice_status': enrollment.invoice_status,
-                    'transaction_id': transaction_id,
-                    'amount': float(amount)
-                }
-            })
+            # Redirect đến trang Frontend với thông tin thành công
+            frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5500')
+            params = {
+                'success': 'true',
+                'enrollment_id': str(enrollment.id),
+                'transaction_id': transaction_id or '',
+                'amount': str(amount) if amount else ''
+            }
+            redirect_url = f"{frontend_url}/payment_result.html?{urlencode(params)}"
+            return redirect(redirect_url)
         else:
             # Thanh toán thất bại
             logger.warning(f"Payment failed for enrollment {enrollment_id}, response_code: {response_code}")
             
-            return Response({
-                'success': False,
+            # Redirect đến trang Frontend với thông tin thất bại
+            frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:5500')
+            params = {
+                'success': 'false',
+                'enrollment_id': str(enrollment.id) if enrollment else enrollment_id,
                 'error': 'Thanh toán thất bại',
-                'response_code': response_code
-            }, status=status.HTTP_400_BAD_REQUEST)
+                'response_code': response_code or ''
+            }
+            redirect_url = f"{frontend_url}/payment_result.html?{urlencode(params)}"
+            return redirect(redirect_url)
 
 
 class VNPayIPNView(APIView):

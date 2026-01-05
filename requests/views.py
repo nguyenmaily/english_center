@@ -5,9 +5,30 @@ from .models import ReserveRequest, LeaveRequest
 
 
 class ReserveRequestSerializer(serializers.ModelSerializer):
+    student_name = serializers.SerializerMethodField()
+    class_name = serializers.SerializerMethodField()
+    
     class Meta:
         model = ReserveRequest
         fields = '__all__'
+    
+    def get_student_name(self, obj):
+        """Lấy tên học viên từ user_account"""
+        try:
+            from users.models import Student
+            student = Student.objects.select_related('user_account').get(id=obj.student_id)
+            return student.user_account.fullname or student.user_account.username
+        except Exception:
+            return f"Học viên {str(obj.student_id)[:8]}..."
+    
+    def get_class_name(self, obj):
+        """Lấy tên lớp học"""
+        try:
+            from classes.models import Class
+            cls = Class.objects.get(id=obj.class_id)
+            return cls.name
+        except Exception:
+            return f"Lớp {str(obj.class_id)[:8]}..."
 
 
 class LeaveRequestSerializer(serializers.ModelSerializer):
@@ -63,9 +84,42 @@ class ReserveRequestViewSet(viewsets.ModelViewSet):
     
     @action(detail=False, methods=['get'], url_path='manager-classes')
     def manager_class_requests(self, request):
-        """Get reserve requests for all classes (manager can see all)"""
-        # Manager can see all reserve requests
-        qs = ReserveRequest.objects.all().order_by('-created_at')
+        """Get reserve requests for classes in manager's campus"""
+        from classes.models import Class
+        from users.models import Manager
+        
+        # Get manager's campus
+        manager_campus_id = None
+        if hasattr(request.user, 'roleid') and request.user.roleid:
+            if request.user.roleid.name == 'manager':
+                try:
+                    manager = Manager.objects.select_related('campus').get(user_account=request.user)
+                    if manager.campus:
+                        manager_campus_id = manager.campus.id
+                except Manager.DoesNotExist:
+                    pass
+        
+        # If manager has no campus, return empty list
+        if manager_campus_id is None:
+            # Check if user is admin - admin can see all
+            if hasattr(request.user, 'roleid') and request.user.roleid:
+                if request.user.roleid.name == 'admin':
+                    # Admin can see all
+                    qs = ReserveRequest.objects.all().order_by('-created_at')
+                else:
+                    # Not manager and not admin - return empty
+                    return Response([])
+            else:
+                return Response([])
+        else:
+            # Get all classes in manager's campus
+            campus_classes = Class.objects.filter(campus_id=manager_campus_id).values_list('id', flat=True)
+            
+            if not campus_classes:
+                return Response([])
+            
+            # Get reserve requests for these classes only
+            qs = ReserveRequest.objects.filter(class_id__in=campus_classes).order_by('-created_at')
         
         # Filter by status if provided
         status_filter = request.query_params.get('status')
@@ -209,6 +263,14 @@ class ReserveRequestViewSet(viewsets.ModelViewSet):
 class LeaveRequestViewSet(viewsets.ModelViewSet):
     queryset = LeaveRequest.objects.all().order_by('-created_at')
     serializer_class = LeaveRequestSerializer
+
+    def get_queryset(self):
+        """Override to filter by student_id if provided"""
+        qs = super().get_queryset()
+        student_id = self.request.query_params.get('student_id')
+        if student_id:
+            qs = qs.filter(student_id=student_id)
+        return qs
 
     def create(self, request, *args, **kwargs):
         """Override create method to set default status"""

@@ -13,5 +13,6 @@ urlpatterns = [
     path('courses/<uuid:course_id>/eligible-classes/', views.CourseEligibleClassesView.as_view(), name='course-eligible-classes'),
     
     # Skill endpoints
+    path('skills/', views.SkillListView.as_view(), name='skill-list'),
     path('skills/<uuid:pk>/', views.SkillDetailView.as_view(), name='skill-detail'),
 ]

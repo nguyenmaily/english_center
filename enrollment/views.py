@@ -137,9 +137,12 @@ class EnrollmentViewSet(PermissionMixin, viewsets.ModelViewSet):
             if manager.campus:
                 # Kiểm tra enrollment có thuộc lớp trong campus của manager không
                 if method in ['GET', 'PATCH', 'PUT']:
-                    # Với GET: kiểm tra class_id trong query params
+                    # Với GET: kiểm tra class_id hoặc student_id trong query params
                     if method == 'GET':
                         class_id = request.query_params.get('class_id')
+                        student_id = request.query_params.get('student_id')
+                        
+                        # Nếu query với class_id: kiểm tra lớp có thuộc campus của manager không
                         if class_id:
                             try:
                                 cls = Class.objects.get(id=class_id)
@@ -147,6 +150,21 @@ class EnrollmentViewSet(PermissionMixin, viewsets.ModelViewSet):
                                     return  # Cho phép manager xem enrollments của lớp trong campus
                             except Class.DoesNotExist:
                                 pass
+                        
+                        # Nếu query với student_id: kiểm tra học viên có enrollment trong các lớp thuộc campus của manager không
+                        if student_id:
+                            # Lấy tất cả classes thuộc campus của manager
+                            campus_classes = Class.objects.filter(campus=manager.campus).values_list('id', flat=True)
+                            
+                            # Kiểm tra học viên có enrollment trong các lớp này không
+                            enrollment_exists = Enrollment.objects.filter(
+                                student_id=student_id,
+                                class_id__in=campus_classes
+                            ).exists()
+                            
+                            if enrollment_exists:
+                                return  # Cho phép manager xem enrollments của học viên trong campus
+                    
                     # Với PATCH/PUT: kiểm tra enrollment có class_id thuộc campus của manager không
                     elif method in ['PATCH', 'PUT']:
                         # Lấy enrollment từ URL (pk)
@@ -202,7 +220,7 @@ class EnrollmentViewSet(PermissionMixin, viewsets.ModelViewSet):
         super().check_permissions(request)
 
     def get_queryset(self):
-        """Filter enrollments by class_id or student_id if provided"""
+        """Filter enrollments by class_id, student_id, or invoice_status if provided"""
         queryset = super().get_queryset()
         
         # Filter by class_id
@@ -214,6 +232,11 @@ class EnrollmentViewSet(PermissionMixin, viewsets.ModelViewSet):
         student_id = self.request.query_params.get('student_id')
         if student_id:
             queryset = queryset.filter(student_id=student_id)
+        
+        # Filter by invoice_status (e.g., 'paid', 'pending', 'canceled')
+        invoice_status = self.request.query_params.get('invoice_status')
+        if invoice_status:
+            queryset = queryset.filter(invoice_status=invoice_status)
         
         return queryset
 

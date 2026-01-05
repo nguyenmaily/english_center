@@ -288,7 +288,42 @@ CORS_ALLOW_HEADERS = [
 # }
 
 # Email Configuration (for password reset)
-EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+# Use SMTP backend to send real emails
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+
+# ========== CẤU HÌNH EMAIL - ĐIỀN THÔNG TIN CỦA BẠN VÀO ĐÂY ==========
+# Gmail Configuration
+EMAIL_HOST = 'smtp.gmail.com'
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+EMAIL_USE_SSL = False
+EMAIL_HOST_USER = 'nt718599@gmail.com'  # ⚠️ THAY BẰNG EMAIL CỦA BẠN
+EMAIL_HOST_PASSWORD = 'kuib chax lxxy bdzs'  # ⚠️ THAY BẰNG APP PASSWORD (Gmail) - KHÔNG dùng mật khẩu thông thường!
+DEFAULT_FROM_EMAIL = 'nt718599@gmail.com'  # ⚠️ THAY BẰNG EMAIL CỦA BẠN
+
+# Lưu ý cho Gmail:
+# 1. Bật 2-Step Verification: https://myaccount.google.com/security
+# 2. Tạo App Password: https://myaccount.google.com/apppasswords
+# 3. Dùng App Password (16 ký tự) cho EMAIL_HOST_PASSWORD, KHÔNG dùng mật khẩu Gmail thông thường
+
+# Nếu dùng email provider khác, thay đổi các giá trị sau:
+# Outlook/Hotmail:
+#   EMAIL_HOST = 'smtp-mail.outlook.com'
+#   EMAIL_PORT = 587
+#   EMAIL_USE_TLS = True
+#   EMAIL_USE_SSL = False
+#   EMAIL_HOST_USER = 'your-email@outlook.com'
+#   EMAIL_HOST_PASSWORD = 'your-password'
+#   DEFAULT_FROM_EMAIL = 'your-email@outlook.com'
+
+# Yahoo Mail:
+#   EMAIL_HOST = 'smtp.mail.yahoo.com'
+#   EMAIL_PORT = 587
+#   EMAIL_USE_TLS = True
+#   EMAIL_USE_SSL = False
+#   EMAIL_HOST_USER = 'your-email@yahoo.com'
+#   EMAIL_HOST_PASSWORD = 'your-app-password'
+#   DEFAULT_FROM_EMAIL = 'your-email@yahoo.com'
 
 # Media files
 MEDIA_URL = '/media/'

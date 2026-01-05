@@ -487,16 +487,40 @@ Khi nhận callback từ VNPay:
 
 VNPay cung cấp sandbox để test:
 - URL: https://sandbox.vnpayment.vn/
-- Test cards: VNPay sẽ cung cấp danh sách thẻ test
+- Demo cổng thanh toán: https://sandbox.vnpayment.vn/apis/vnpay-demo/
 
-### 2. Test Flow
+### 2. Thẻ Test
+
+VNPay cung cấp thẻ test để test thanh toán:
+
+**Thông tin thẻ test:**
+- **Ngân hàng:** NCB
+- **Số thẻ:** 9704198526191432198
+- **Tên chủ thẻ:** NGUYEN VAN A
+- **Ngày phát hành:** 07/15
+- **Mật khẩu OTP:** 123456
+
+**Cách sử dụng:**
+1. Chọn phương thức thanh toán: **"Thẻ nội địa và tài khoản ngân hàng"**
+2. Chọn ngân hàng **NCB**
+3. Nhập thông tin thẻ test ở trên
+4. Nhập OTP: **123456** khi được yêu cầu
+
+**Lưu ý:**
+- ⚠️ **KHÔNG chọn "App Ngân hàng và Ví điện tử (VNPAYQR)"** - QR code không hoạt động trong sandbox
+- ✅ Nên chọn **"Thẻ nội địa và tài khoản ngân hàng"** để test
+- ✅ Có thể test với **"Thẻ thanh toán quốc tế"** nếu có thẻ test quốc tế
+
+### 3. Test Flow
 
 1. Tạo enrollment với `payment_method = 'vnpay'`
 2. Lấy `payment_url` từ response
 3. Mở `payment_url` trong browser
-4. Dùng test card để thanh toán
-5. Kiểm tra callback được gọi đúng
-6. Kiểm tra `invoice_status` được cập nhật thành `'paid'`
+4. Chọn phương thức thanh toán: **"Thẻ nội địa và tài khoản ngân hàng"**
+5. Chọn ngân hàng **NCB** và nhập thông tin thẻ test
+6. Nhập OTP: **123456**
+7. Kiểm tra callback được gọi đúng
+8. Kiểm tra `invoice_status` được cập nhật thành `'paid'`
 
 ---
 
@@ -549,8 +573,16 @@ VNPay cung cấp sandbox để test:
 
 ## Tài liệu tham khảo
 
-- VNPay Documentation: https://sandbox.vnpayment.vn/apis/
-- VNPay Merchant Portal: https://sandbox.vnpayment.vn/merchant/
+### Tài liệu chính thức
+- **Tài liệu hướng dẫn tích hợp:** https://sandbox.vnpayment.vn/apis/docs/thanh-toan-pay/pay.html
+- **Code demo tích hợp:** https://sandbox.vnpayment.vn/apis/vnpay-demo/code-demo-tích-hợp
+- **Demo cổng thanh toán:** https://sandbox.vnpayment.vn/apis/vnpay-demo/
+- **VNPay Merchant Portal:** https://sandbox.vnpayment.vn/merchant/
+- **VNPay Sandbox:** https://sandbox.vnpayment.vn/
+
+### Thông tin liên hệ hỗ trợ
+- **Email:** support.vnpayment@vnpay.vn
+- **Hotline:** 1900 55 55 77
 
 ---
 

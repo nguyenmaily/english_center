@@ -72,7 +72,7 @@ class UserCreateSerializer(serializers.ModelSerializer):
         required=False, 
         allow_null=True,
         min_value=0,
-        max_value=9,
+        max_value=990,
         help_text="Target IELTS score"
     )
     student_commitment_status = serializers.ChoiceField(
@@ -276,7 +276,7 @@ class UserUpdateWithProfileSerializer(serializers.ModelSerializer):
     manager_campus_id = serializers.UUIDField(write_only=True, required=False, allow_null=True)
     
     # Student fields
-    student_target_score = serializers.IntegerField(write_only=True, required=False, allow_null=True, min_value=0, max_value=9)
+    student_target_score = serializers.IntegerField(write_only=True, required=False, allow_null=True, min_value=0, max_value=990)
     student_commitment_status = serializers.ChoiceField(
         choices=Student.CommitmentStatus.choices,
         write_only=True,

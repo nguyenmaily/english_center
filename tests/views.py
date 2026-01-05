@@ -69,10 +69,10 @@ def update_student_certificate_from_exam_result(exam_result):
                 logger.warning(f"⚠️ Blueprint not found: {exam_instance.blueprint_id}")
                 print(f"[UPDATE_CERTIFICATE] ⚠️ Blueprint not found: {exam_instance.blueprint_id}")
         
-        # Chỉ xử lý final test, midterm test hoặc placement test
-        if exam_type not in ['final', 'midterm', 'placement']:
-            logger.warning(f"⚠️ Skipping certificate update: exam_type={exam_type} (not 'final', 'midterm' or 'placement')")
-            print(f"[UPDATE_CERTIFICATE] ⚠️ Skipping certificate update: exam_type={exam_type} (not 'final', 'midterm' or 'placement')")
+        # Chỉ xử lý final test hoặc placement test (KHÔNG lưu midterm test)
+        if exam_type not in ['final', 'placement']:
+            logger.warning(f"⚠️ Skipping certificate update: exam_type={exam_type} (not 'final' or 'placement')")
+            print(f"[UPDATE_CERTIFICATE] ⚠️ Skipping certificate update: exam_type={exam_type} (not 'final' or 'placement')")
             return
         
         # Cập nhật exam_instance.exam_type để sử dụng trong các bước tiếp theo
@@ -123,10 +123,9 @@ def update_student_certificate_from_exam_result(exam_result):
         logger.info(f"✅ Successfully converted score: {exam_result.score}% → {total_score} TOEIC")
         
         # Xác định source_type (sử dụng exam_type đã được xác định ở trên)
+        # KHÔNG lưu midterm_test vào student_certificates
         if exam_type == 'placement':
             source_type = StudentCertificate.SourceType.ENTRY_TEST
-        elif exam_type == 'midterm':
-            source_type = StudentCertificate.SourceType.MIDTERM_TEST
         else:  # final
             source_type = StudentCertificate.SourceType.FINAL_TEST
         
@@ -135,15 +134,15 @@ def update_student_certificate_from_exam_result(exam_result):
         test_date = exam_result.submitted_at.date() if exam_result.submitted_at else timezone.now().date()
         
         # Tìm record mới nhất với cùng source_type và skill_group
-        # CHỈ tìm records có source_type='entry_test', 'midterm_test' hoặc 'final_test'
-        # KHÔNG động vào records có source_type='certificate' (chứng chỉ upload)
+        # CHỈ tìm records có source_type='entry_test' hoặc 'final_test'
+        # KHÔNG động vào records có source_type='certificate' (chứng chỉ upload) hoặc 'midterm_test'
         latest_certificate = StudentCertificate.objects.filter(
             student=student,
             source_type=source_type,  # Filter theo entry_test, midterm_test hoặc final_test
             skill_group=skill_group
         ).order_by('-test_date', '-created_at').first()
         
-        test_type_name = 'placement test' if exam_type == 'placement' else ('midterm test' if exam_type == 'midterm' else 'final test')
+        test_type_name = 'placement test' if exam_type == 'placement' else 'final test'
         
         logger.info(f"🔍 Looking for existing certificate: student={student.id}, source_type={source_type}, skill_group={skill_group}")
         logger.info(f"📊 Certificate data to save: total_score={total_score}, test_date={test_date}, source_type={source_type}, skill_group={skill_group}")
@@ -386,6 +385,7 @@ class ExamBlueprintSerializer(serializers.ModelSerializer):
 class ExamInstanceSerializer(serializers.ModelSerializer):
     class_name = serializers.SerializerMethodField()
     exam_type_display = serializers.SerializerMethodField()
+    min_exit_score = serializers.SerializerMethodField()
     
     class Meta:
         model = ExamInstance
@@ -412,6 +412,20 @@ class ExamInstanceSerializer(serializers.ModelSerializer):
                 pass
         # For manual exams, use exam_type from ExamInstance
         return obj.exam_type if obj.exam_type else None
+    
+    def get_min_exit_score(self, obj):
+        """Get min_exit_score from course via class"""
+        if obj.class_id:
+            try:
+                from classes.models import Class
+                from courses.models import Course
+                class_obj = Class.objects.get(id=obj.class_id)
+                if class_obj.course_id:
+                    course = Course.objects.get(id=class_obj.course_id)
+                    return course.min_exit_score if course.min_exit_score is not None else None
+            except (Class.DoesNotExist, Course.DoesNotExist):
+                pass
+        return None
 
 
 class ExamResultSerializer(serializers.ModelSerializer):
@@ -977,10 +991,12 @@ class ExamInstanceViewSet(viewsets.ModelViewSet):
                         SELECT ei.id, ei.blueprint_id, ei.title, ei.status, ei.class_id, ei.exam_type, ei.generated_at, ei.created_by,
                                eb.title as blueprint_title,
                                eb.exam_type as blueprint_exam_type,
-                               c.name as class_name
+                               c.name as class_name,
+                               co.min_exit_score
                         FROM exam_instances ei
                         LEFT JOIN exam_blueprints eb ON ei.blueprint_id = eb.id
                         LEFT JOIN classes c ON ei.class_id = c.id
+                        LEFT JOIN courses co ON c.course_id = co.id
                         ORDER BY ei.generated_at DESC
                     """)
                     columns = [col[0] for col in cursor.description]
@@ -999,6 +1015,7 @@ class ExamInstanceViewSet(viewsets.ModelViewSet):
                                 'status': row_dict['status'] if row_dict['status'] else 'draft',
                                 'generated_at': row_dict['generated_at'],
                                 'created_by': str(row_dict['created_by']) if row_dict['created_by'] else None,
+                                'min_exit_score': int(row_dict['min_exit_score']) if row_dict.get('min_exit_score') is not None else None,
                             }
                             
                             # Clean title text
